@@ -20,7 +20,7 @@ Software for generating a surface charge based pH-profile map.
 
 - template file can be changed and converted to executable code (tested with argbash_2.10)
 
-  `argbash pHmap_template -o pHmap`
+  `argbash pHmap.template -o pHmap`
 
 - Required programs have to be in executable paths
 
