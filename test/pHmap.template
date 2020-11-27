@@ -1,0 +1,150 @@
+#!/bin/bash
+#
+# ARG_POSITIONAL_INF([ph_values],[sequence of space seperated values; from 0.00 to 14.00;\npH values to process]))
+# ARG_OPTIONAL_SINGLE([pdb],[p],[input pdb file])
+# ARG_OPTIONAL_SINGLE([ligand],[l],[input mol2 file])
+# ARG_OPTIONAL_SINGLE([set_view],[s],[imports view settings from file; input file must contain\nthe PyMol output of the get_view command!])
+
+# ARG_OPTIONAL_SINGLE([level], ,[level of pos and neg charge representation\n], [5])
+# ARG_OPTIONAL_SINGLE([rampcolors], ,[colors for ramp; 3 colors comma seperated\n], [red, white, blue])
+# ARG_OPTIONAL_BOOLEAN([surface_above], ,[surface_ramp_above_mode from PyMol\n], [on])
+
+# ARG_OPTIONAL_BOOLEAN([axis_update], ,[updates only the pH numbers of the x-axis\n])
+# ARG_OPTIONAL_SINGLE([fontsize], ,[font size of the axis], [40])
+# ARG_OPTIONAL_SINGLE([alignment], ,[alignment of the axis text: West, Center, East\n], [Center])
+# ARG_OPTIONAL_SINGLE([size], ,[individual picture size: default is 500 which means 500x500 pixel with 300 dpi\n], [500])
+# ARG_OPTIONAL_SINGLE([background], ,[background color: None, colors e.g. white, black])
+
+# ARG_HELP([+-------+\n| pHmap |\n+-------+\nby Erik Breslmayr, 2020\n \npHmap uses pdb2pqr, apbs to calcualte electrostatic surface potentials,\nwhich are visualized by generating 2D pictures with PyMol. Several pH\nvalues can be processed and will be combined into one figure. As x-Axis\nof the picture pH-profile the pH values will be added.\n])
+# ARG_OPTIONAL_REPEATED([include],[I],[Directory for temporary folder],['/tmp'])
+
+# ARGBASH_GO
+
+# [ <-- needed because of Argbash
+
+## Variables
+SECONDS=0
+TEMP="$_arg_include"
+WPATH="$(pwd)"
+
+### arguments var
+pdb="$_arg_pdb" #pdb inpout filename
+ligand="$_arg_ligand" # mol2 file of ligand
+pH="${_arg_ph_values[*]}" # pH values
+if [[ -z "$_arg_set_view" ]]; then
+    view=" "
+else
+    view=$(cat $_arg_set_view)
+fi
+
+posneg="$_arg_level" # positive negative level
+rampColors="$_arg_rampcolors" # ramp colors
+if [ $_arg_surface_above = "off" ]; then
+    above_mode=" "
+else
+    above_mode="set surface_ramp_above_mode"
+fi
+
+update="$_arg_axis_update" # update xaxis
+fontSize="$_arg_fontsize" # fontsize of axis
+axisPageSize=$(echo $fontSize*1.25 | bc) # axispagehighnes is 1.25 times higher then fontsize
+alignmentAxis="$_arg_alignment" # axis gravity
+picResolution="$_arg_size" # width and height of pictures
+backGround="$_arg_background" # background color
+if [[ -z "$backGround" ]]; then
+    backGroundTrans="off"
+    backGround="None"
+else
+    backGroundTrans="on"
+fi
+
+## Functions
+timeNeed () {
+ELAPSED="$(($SECONDS / 3600))hrs $((($SECONDS / 60) % 60))min $(($SECONDS % 60))sec"
+printf "|%-30s%30s|\n" "Program finished within:" "$ELAPSED"
+}
+
+check () {
+#checks if pdb file is given
+
+if [[ -z "$_arg_pdb" ]]; then
+	printf "$emptyFormat" "       !no pdb file given!"
+	printf "$emptyFormat" "      pHmap -h for help!"
+else
+    runScript
+fi
+}
+
+picGen () {
+
+for i in $pH; do
+    pdb2pqr --with-ph=$i --ph-calc-method=propka --drop-water --apbs-input --ff=parse --verbose --ligand=$ligand $pdb $i-p2p.pqr
+    sleep 1s
+    apbs --output-file=$i-apbs.log $i-p2p.in
+    sleep 1s
+    
+    printf " 
+load $i-p2p.pqr.dx
+load $i-p2p.pqr
+as surface
+ramp_new ramp, $i-p2p.pqr, [-$posneg, 0, $posneg], [$rampColors]
+set surface_color, ramp
+$above_mode
+disable ramp
+$view
+center
+zoom
+set opaque_background, $backGroundTrans
+bg_color $backGround
+png $i-pic.png, width=$picResolution, height=$picResolution, dpi=300" > rendering.pml
+
+    pymol -cq rendering.pml
+done
+}    
+
+numGen () {
+for i in $pH; do
+    convert -size ${picResolution}x$axisPageSize -gravity $alignmentAxis -background  $backGround -pointsize $fontSize label:$i $WPATH/$i-number.png
+done
+}
+
+
+picCombine () {
+list=$(ls -tr $WPATH/*-pic.png)
+convert +append $list pH_profile_pic.png
+list=$(ls -tr $WPATH/*-number.png)
+convert +append $list pH_profile_number.png
+convert -append pH_profile_pic.png pH_profile_number.png pH_profile.png
+
+}
+
+cleanUp () {
+#cleans up the directory
+mkdir p2pFiles >/dev/null 2>/dev/null
+mkdir logFiles >/dev/null 2>/dev/null
+mkdir pngFiles >/dev/null 2>/dev/null
+
+mv *-apbs.log logFiles >/dev/null 2>/dev/null
+mv *p2p* p2pFiles >/dev/null 2>/dev/null
+mv *-pic.png pngFiles >/dev/null 2>/dev/null
+mv *-number.png pngFiles >/dev/null 2>/dev/null
+rm io.mc >/dev/null 2>/dev/null
+}
+
+## SCRIPT 
+runScript () {
+if [ $update = "on" ]; then
+    WPATH=$(echo $WPATH/pngFiles)
+    rm $WPATH/*-number.png >/dev/null 2>/dev/null
+    numGen
+    picCombine
+else
+    picGen
+    numGen
+    picCombine
+fi
+cleanUp
+timeNeed
+}
+check
+# ] <-- needed because of Argbash
