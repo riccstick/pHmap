@@ -10,12 +10,19 @@
 # ARG_OPTIONAL_BOOLEAN([surface_above],[],[surface_ramp_above_mode from PyMol\n],[on])
 
 # ARG_OPTIONAL_BOOLEAN([axis_update],[],[updates only the pH numbers of the x-axis\n])
-# ARG_OPTIONAL_SINGLE([fontsize],[],[font size of the axis],[40])
+# ARG_OPTIONAL_SINGLE([digits],[],[digits of pH values in axis; if pH values like 5.25 change to 2!\n],[1])
+# ARG_OPTIONAL_SINGLE([font],[],[font of the axis; type <convert -list font>\nto get a full list of fonts available\n],[Helvetica])
+# ARG_OPTIONAL_SINGLE([fontsize],[],[font size],[40])
+# ARG_OPTIONAL_SINGLE([weight],[],[font weight; type  <convert -list weight>\n to get a list of available weight settings\n],[Normal])
+# ARG_OPTIONAL_SINGLE([stretch],[],[font stretch; type  <convert -list stretch>\n to get a list of available stretch settings\n],[Normal])
+# ARG_OPTIONAL_SINGLE([style],[],[font style; type  <convert -list style>\n to get a list of available style settings\n],[Normal])
+
 # ARG_OPTIONAL_SINGLE([alignment],[],[alignment of the axis text: West, Center, East\n],[Center])
-# ARG_OPTIONAL_SINGLE([size],[],[individual picture size: default is 500 which means 500x500 pixel with 300 dpi\n],[500])
+# ARG_OPTIONAL_SINGLE([size],[],[individual picture size: default means 500x500 pixel (quadratic; 300 dpi)\n],[500])
 # ARG_OPTIONAL_SINGLE([background],[],[background color: None, colors e.g. white, black])
 
 # ARG_HELP([+-------+\n| pHmap |\n+-------+\nby Erik Breslmayr, 2020\n \npHmap uses pdb2pqr, apbs to calcualte electrostatic surface potentials,\nwhich are visualized by generating 2D pictures with PyMol. Several pH\nvalues can be processed and will be combined into one figure. As x-Axis\nof the picture pH-profile the pH values will be added.\n])
+# ARG_VERSION([echo $0 v1.1])
 # ARG_OPTIONAL_REPEATED([include],[I],[Directory for temporary folder],['/tmp'])
 
 # ARGBASH_GO()
@@ -36,7 +43,7 @@ die()
 
 begins_with_short_option()
 {
-	local first_option all_short_options='plshI'
+	local first_option all_short_options='plshvI'
 	first_option="${1:0:1}"
 	test "$all_short_options" = "${all_short_options/$first_option/}" && return 1 || return 0
 }
@@ -52,7 +59,12 @@ _arg_level="5"
 _arg_rampcolors="red, white, blue"
 _arg_surface_above="on"
 _arg_axis_update="off"
+_arg_digits="1"
+_arg_font="Helvetica"
 _arg_fontsize="40"
+_arg_weight="Normal"
+_arg_stretch="Normal"
+_arg_style="Normal"
 _arg_alignment="Center"
 _arg_size="500"
 _arg_background=
@@ -71,7 +83,7 @@ which are visualized by generating 2D pictures with PyMol. Several pH
 values can be processed and will be combined into one figure. As x-Axis
 of the picture pH-profile the pH values will be added.
 "
-	printf 'Usage: %s [-p|--pdb <arg>] [-l|--ligand <arg>] [-s|--set_view <arg>] [--level <arg>] [--rampcolors <arg>] [--(no-)surface_above] [--(no-)axis_update] [--fontsize <arg>] [--alignment <arg>] [--size <arg>] [--background <arg>] [-h|--help] [-I|--include <arg>] [<ph_values-1>] ... [<ph_values-n>] ...\n' "$0"
+	printf 'Usage: %s [-p|--pdb <arg>] [-l|--ligand <arg>] [-s|--set_view <arg>] [--level <arg>] [--rampcolors <arg>] [--(no-)surface_above] [--(no-)axis_update] [--digits <arg>] [--font <arg>] [--fontsize <arg>] [--weight <arg>] [--stretch <arg>] [--style <arg>] [--alignment <arg>] [--size <arg>] [--background <arg>] [-h|--help] [-v|--version] [-I|--include <arg>] [<ph_values-1>] ... [<ph_values-n>] ...\n' "$0"
 	printf '\t%s\n' "<ph_values>: sequence of space seperated values; from 0.00 to 14.00;
 		pH values to process"
 	printf '\t%s\n' "-p, --pdb: input pdb file (no default)"
@@ -86,13 +98,28 @@ of the picture pH-profile the pH values will be added.
 		 (on by default)"
 	printf '\t%s\n' "--axis_update, --no-axis_update: updates only the pH numbers of the x-axis
 		 (off by default)"
-	printf '\t%s\n' "--fontsize: font size of the axis (default: '40')"
+	printf '\t%s\n' "--digits: digits of pH values in axis; if pH values like 5.25 change to 2!
+		 (default: '1')"
+	printf '\t%s\n' "--font: font of the axis; type <convert -list font>
+		to get a full list of fonts available
+		 (default: 'Helvetica')"
+	printf '\t%s\n' "--fontsize: font size (default: '40')"
+	printf '\t%s\n' "--weight: font weight; type  <convert -list weight>
+		 to get a list of available weight settings
+		 (default: 'Normal')"
+	printf '\t%s\n' "--stretch: font stretch; type  <convert -list stretch>
+		 to get a list of available stretch settings
+		 (default: 'Normal')"
+	printf '\t%s\n' "--style: font style; type  <convert -list style>
+		 to get a list of available style settings
+		 (default: 'Normal')"
 	printf '\t%s\n' "--alignment: alignment of the axis text: West, Center, East
 		 (default: 'Center')"
-	printf '\t%s\n' "--size: individual picture size: default is 500 which means 500x500 pixel with 300 dpi
+	printf '\t%s\n' "--size: individual picture size: default means 500x500 pixel (quadratic; 300 dpi)
 		 (default: '500')"
 	printf '\t%s\n' "--background: background color: None, colors e.g. white, black (no default)"
 	printf '\t%s\n' "-h, --help: Prints help"
+	printf '\t%s\n' "-v, --version: Prints version"
 	printf '\t%s' "-I, --include: Directory for temporary folder (default array elements:"
 	printf " '%s'" '/tmp'
 	printf ')\n'
@@ -163,6 +190,22 @@ parse_commandline()
 				_arg_axis_update="on"
 				test "${1:0:5}" = "--no-" && _arg_axis_update="off"
 				;;
+			--digits)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_digits="$2"
+				shift
+				;;
+			--digits=*)
+				_arg_digits="${_key##--digits=}"
+				;;
+			--font)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_font="$2"
+				shift
+				;;
+			--font=*)
+				_arg_font="${_key##--font=}"
+				;;
 			--fontsize)
 				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
 				_arg_fontsize="$2"
@@ -170,6 +213,30 @@ parse_commandline()
 				;;
 			--fontsize=*)
 				_arg_fontsize="${_key##--fontsize=}"
+				;;
+			--weight)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_weight="$2"
+				shift
+				;;
+			--weight=*)
+				_arg_weight="${_key##--weight=}"
+				;;
+			--stretch)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_stretch="$2"
+				shift
+				;;
+			--stretch=*)
+				_arg_stretch="${_key##--stretch=}"
+				;;
+			--style)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_style="$2"
+				shift
+				;;
+			--style=*)
+				_arg_style="${_key##--style=}"
 				;;
 			--alignment)
 				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
@@ -201,6 +268,14 @@ parse_commandline()
 				;;
 			-h*)
 				print_help
+				exit 0
+				;;
+			-v|--version)
+				echo $0 v1.1
+				exit 0
+				;;
+			-v*)
+				echo $0 v1.1
 				exit 0
 				;;
 			-I|--include)
@@ -259,28 +334,27 @@ TEMP="$_arg_include"
 WPATH="$(pwd)"
 
 ### arguments var
-pdb="$_arg_pdb" #pdb inpout filename
-ligand="$_arg_ligand" # mol2 file of ligand
-pH="${_arg_ph_values[*]}" # pH values
 if [[ -z "$_arg_set_view" ]]; then
     view=" "
 else
     view=$(cat $_arg_set_view)
 fi
+#### pH range
+pHmin=$(printf "%.${_arg_digits}f" ${_arg_ph_values[0]}) # pH values
+pHinc=$(printf "%.${_arg_digits}f" ${_arg_ph_values[1]}) # increment for range with digits to choose
+pHmax=$(printf "%.${_arg_digits}f" ${_arg_ph_values[2]}) # pH values
 
-posneg="$_arg_level" # positive negative level
-rampColors="$_arg_rampcolors" # ramp colors
+for i in `seq $pHmin $pHinc $pHmax`; do
+    pHrange=$(printf "%.${_arg_digits}f\n" $pHrange $i)
+done
+#### pymol settings
 if [ $_arg_surface_above = "off" ]; then
     above_mode=" "
 else
     above_mode="set surface_ramp_above_mode"
 fi
-
-update="$_arg_axis_update" # update xaxis
-fontSize="$_arg_fontsize" # fontsize of axis
-axisPageSize=$(echo $fontSize*1.25 | bc) # axispagehighnes is 1.25 times higher then fontsize
-alignmentAxis="$_arg_alignment" # axis gravity
-picResolution="$_arg_size" # width and height of pictures
+#### convert settings
+axisPageSize=$(echo $_arg_fontsize*1.25 | bc) # axispagehighnes is 1.25 times higher then fontsize
 backGround="$_arg_background" # background color
 if [[ -z "$backGround" ]]; then
     backGroundTrans="off"
@@ -308,8 +382,8 @@ fi
 
 picGen () {
 
-for i in $pH; do
-    pdb2pqr --with-ph=$i --ph-calc-method=propka --drop-water --apbs-input --ff=parse --verbose --ligand=$ligand $pdb $i-p2p.pqr
+for i in $pHrange; do
+    pdb2pqr --with-ph=$i --ph-calc-method=propka --drop-water --apbs-input --ff=parse --verbose --ligand=$_arg_ligand $_arg_pdb $i-p2p.pqr
     sleep 1s
     apbs --output-file=$i-apbs.log $i-p2p.in
     sleep 1s
@@ -318,7 +392,7 @@ for i in $pH; do
 load $i-p2p.pqr.dx
 load $i-p2p.pqr
 as surface
-ramp_new ramp, $i-p2p.pqr, [-$posneg, 0, $posneg], [$rampColors]
+ramp_new ramp, $i-p2p.pqr, [-$_arg_level, 0, $_arg_level], [$_arg_rampcolors]
 set surface_color, ramp
 $above_mode
 disable ramp
@@ -327,15 +401,15 @@ center
 zoom
 set opaque_background, $backGroundTrans
 bg_color $backGround
-png $i-pic.png, width=$picResolution, height=$picResolution, dpi=300" > rendering.pml
+png $i-pic.png, width=$_arg_size, height=$_arg_size, dpi=300" > rendering.pml
 
     pymol -cq rendering.pml
 done
 }
 
 numGen () {
-for i in $pH; do
-    convert -size ${picResolution}x$axisPageSize -gravity $alignmentAxis -background  $backGround -pointsize $fontSize label:$i $WPATH/$i-number.png
+for i in $pHrange; do
+    convert -size ${_arg_size}x$axisPageSize -gravity $_arg_alignment -background  $backGround -weight $_arg_weight -stretch $_arg_stretch -style $_arg_style -pointsize $_arg_fontsize -family $_arg_font label:$i $WPATH/$i-number.png
 done
 }
 
@@ -364,7 +438,7 @@ rm io.mc >/dev/null 2>/dev/null
 
 ## SCRIPT
 runScript () {
-if [ $update = "on" ]; then
+if [ $_arg_axis_update = "on" ]; then
     WPATH=$(echo $WPATH/pngFiles)
     rm $WPATH/*-number.png >/dev/null 2>/dev/null
     numGen
