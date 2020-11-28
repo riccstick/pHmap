@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# ARG_POSITIONAL_INF([ph_values],[sequence of space seperated values; from 0.00 to 14.00;\npH values to process]))
+# ARG_POSITIONAL_INF([ph_range],[range of pH's; start steps stop e.g. 5 0.5 7]))
 # ARG_OPTIONAL_SINGLE([pdb],[p],[input pdb file])
 # ARG_OPTIONAL_SINGLE([ligand],[l],[input mol2 file])
 # ARG_OPTIONAL_SINGLE([set_view],[s],[imports view settings from file; input file must contain\nthe PyMol output of the get_view command!])
@@ -22,7 +22,7 @@
 # ARG_OPTIONAL_SINGLE([background],[],[background color: None, colors e.g. white, black])
 
 # ARG_HELP([+-------+\n| pHmap |\n+-------+\nby Erik Breslmayr, 2020\n \npHmap uses pdb2pqr, apbs to calcualte electrostatic surface potentials,\nwhich are visualized by generating 2D pictures with PyMol. Several pH\nvalues can be processed and will be combined into one figure. As x-Axis\nof the picture pH-profile the pH values will be added.\n])
-# ARG_VERSION([echo $0 v1.1])
+# ARG_VERSION([echo $0 v1.1.1])
 # ARG_OPTIONAL_REPEATED([include],[I],[Directory for temporary folder],['/tmp'])
 
 # ARGBASH_GO()
@@ -50,7 +50,7 @@ begins_with_short_option()
 
 # THE DEFAULTS INITIALIZATION - POSITIONALS
 _positionals=()
-_arg_ph_values=()
+_arg_ph_range=()
 # THE DEFAULTS INITIALIZATION - OPTIONALS
 _arg_pdb=
 _arg_ligand=
@@ -83,9 +83,8 @@ which are visualized by generating 2D pictures with PyMol. Several pH
 values can be processed and will be combined into one figure. As x-Axis
 of the picture pH-profile the pH values will be added.
 "
-	printf 'Usage: %s [-p|--pdb <arg>] [-l|--ligand <arg>] [-s|--set_view <arg>] [--level <arg>] [--rampcolors <arg>] [--(no-)surface_above] [--(no-)axis_update] [--digits <arg>] [--font <arg>] [--fontsize <arg>] [--weight <arg>] [--stretch <arg>] [--style <arg>] [--alignment <arg>] [--size <arg>] [--background <arg>] [-h|--help] [-v|--version] [-I|--include <arg>] [<ph_values-1>] ... [<ph_values-n>] ...\n' "$0"
-	printf '\t%s\n' "<ph_values>: sequence of space seperated values; from 0.00 to 14.00;
-		pH values to process"
+	printf 'Usage: %s [-p|--pdb <arg>] [-l|--ligand <arg>] [-s|--set_view <arg>] [--level <arg>] [--rampcolors <arg>] [--(no-)surface_above] [--(no-)axis_update] [--digits <arg>] [--font <arg>] [--fontsize <arg>] [--weight <arg>] [--stretch <arg>] [--style <arg>] [--alignment <arg>] [--size <arg>] [--background <arg>] [-h|--help] [-v|--version] [-I|--include <arg>] [<ph_range-1>] ... [<ph_range-n>] ...\n' "$0"
+	printf '\t%s\n' "<ph_range>: range of pH's; start steps stop e.g. 5 0.5 7"
 	printf '\t%s\n' "-p, --pdb: input pdb file (no default)"
 	printf '\t%s\n' "-l, --ligand: input mol2 file (no default)"
 	printf '\t%s\n' "-s, --set_view: imports view settings from file; input file must contain
@@ -271,11 +270,11 @@ parse_commandline()
 				exit 0
 				;;
 			-v|--version)
-				echo $0 v1.1
+				echo $0 v1.1.1
 				exit 0
 				;;
 			-v*)
-				echo $0 v1.1
+				echo $0 v1.1.1
 				exit 0
 				;;
 			-I|--include)
@@ -307,7 +306,7 @@ assign_positional_args()
 	_our_args=$((${#_positionals[@]} - 0))
 	for ((ii = 0; ii < _our_args; ii++))
 	do
-		_positional_names="$_positional_names _arg_ph_values[$((ii + 0))]"
+		_positional_names="$_positional_names _arg_ph_range[$((ii + 0))]"
 	done
 
 	shift "$_shift_for"
@@ -340,9 +339,9 @@ else
     view=$(cat $_arg_set_view)
 fi
 #### pH range
-pHmin=$(printf "%.${_arg_digits}f" ${_arg_ph_values[0]}) # pH values
-pHinc=$(printf "%.${_arg_digits}f" ${_arg_ph_values[1]}) # increment for range with digits to choose
-pHmax=$(printf "%.${_arg_digits}f" ${_arg_ph_values[2]}) # pH values
+pHmin=$(printf "%.${_arg_digits}f" ${_arg_ph_range[0]}) # pH values
+pHinc=$(printf "%.${_arg_digits}f" ${_arg_ph_range[1]}) # increment for range with digits to choose
+pHmax=$(printf "%.${_arg_digits}f" ${_arg_ph_range[2]}) # pH values
 
 for i in `seq $pHmin $pHinc $pHmax`; do
     pHrange=$(printf "%.${_arg_digits}f\n" $pHrange $i)

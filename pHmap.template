@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# ARG_POSITIONAL_INF([ph_values],[sequence of space seperated values; from 0.00 to 14.00;\npH values to process]))
+# ARG_POSITIONAL_INF([ph_range],[range of pH's; start steps stop e.g. 5 0.5 7]))
 # ARG_OPTIONAL_SINGLE([pdb],[p],[input pdb file])
 # ARG_OPTIONAL_SINGLE([ligand],[l],[input mol2 file])
 # ARG_OPTIONAL_SINGLE([set_view],[s],[imports view settings from file; input file must contain\nthe PyMol output of the get_view command!])
@@ -22,7 +22,7 @@
 # ARG_OPTIONAL_SINGLE([background], ,[background color: None, colors e.g. white, black])
 
 # ARG_HELP([+-------+\n| pHmap |\n+-------+\nby Erik Breslmayr, 2020\n \npHmap uses pdb2pqr, apbs to calcualte electrostatic surface potentials,\nwhich are visualized by generating 2D pictures with PyMol. Several pH\nvalues can be processed and will be combined into one figure. As x-Axis\nof the picture pH-profile the pH values will be added.\n])
-# ARG_VERSION([echo $0 v1.1])
+# ARG_VERSION([echo $0 v1.1.1])
 # ARG_OPTIONAL_REPEATED([include],[I],[Directory for temporary folder],['/tmp'])
 
 # ARGBASH_GO
@@ -41,9 +41,9 @@ else
     view=$(cat $_arg_set_view)
 fi
 #### pH range
-pHmin=$(printf "%.${_arg_digits}f" ${_arg_ph_values[0]}) # pH values
-pHinc=$(printf "%.${_arg_digits}f" ${_arg_ph_values[1]}) # increment for range with digits to choose
-pHmax=$(printf "%.${_arg_digits}f" ${_arg_ph_values[2]}) # pH values
+pHmin=$(printf "%.${_arg_digits}f" ${_arg_ph_range[0]}) # pH values
+pHinc=$(printf "%.${_arg_digits}f" ${_arg_ph_range[1]}) # increment for range with digits to choose
+pHmax=$(printf "%.${_arg_digits}f" ${_arg_ph_range[2]}) # pH values
 
 for i in `seq $pHmin $pHinc $pHmax`; do 
     pHrange=$(printf "%.${_arg_digits}f\n" $pHrange $i)
