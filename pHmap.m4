@@ -11,10 +11,10 @@ _pHmap ()
 	COMPREPLY=()
 	cur="${COMP_WORDS[COMP_CWORD]}"
 	prev="${COMP_WORDS[COMP_CWORD-1]}"
-	all_long_opts="--pdb --ligand --set_view --level --rampcolors --surface_above --axis_update --digits --font --fontsize --weight --stretch --style --alignment --size --background --help --version --include "
-	all_short_opts="-p -l -s -h -v -I "
+	all_long_opts="--ph_range --ligand --set_view --level --rampcolors --surface_above --axis_update --digits --font --fontsize --weight --stretch --style --ramp --xalign --yalign --size --background --help --version --include "
+	all_short_opts="-r -l -s -h -v -I "
 	case "$prev" in
-		--pdb|-p|--ligand|-l|--set_view|-s|--level|--rampcolors|--digits|--font|--fontsize|--weight|--stretch|--style|--alignment|--size|--background|--include|-I)
+		--ph_range|-r|--ligand|-l|--set_view|-s|--level|--rampcolors|--digits|--font|--fontsize|--weight|--stretch|--style|--xalign|--yalign|--size|--background|--include|-I)
 			COMPREPLY=( $(compgen -o bashdefault -o default -- "${cur}") )
 			return 0
 			;;
