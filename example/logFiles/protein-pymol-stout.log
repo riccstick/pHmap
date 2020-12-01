@@ -1,0 +1,34 @@
+ ObjectMapLoadDXFile: Loading from 'protein-5.0-p2p.pqr.dx'.
+ DXStrToMap: Dimensions: 225 161 161
+ DXStrToMap: Origin   90.836  -12.018  134.704
+ DXStrToMap: Grid    0.498    0.478    0.490
+ DXStrToMap: 5832225 data points.
+ ObjectMap: Map read.  Range: -568.771 to 493.751
+ CmdLoad: "protein-5.0-p2p.pqr.dx" loaded as "protein-5.0-p2p.pqr".
+ CmdLoad: "protein-5.0-p2p.pqr" loaded as "protein-5.0-p2p".
+ Executive: object "ramp" created.
+ Setting: surface_color set to ramp.
+ Setting: surface_ramp_above_mode set to 1.
+ Setting: opaque_background set to off.
+Setting-Error: unknown color 'None'
+ Ray: render time: 4.34 sec. = 830.3 frames/hour (4.34 sec. accum.).
+ ScenePNG: wrote 1000x1000 pixel image to file "protein-5.0-pic.png".
+ Ray: render time: 0.07 sec. = 50561.9 frames/hour (4.41 sec. accum.).
+ ScenePNG: wrote 1000x1000 pixel image to file "rawRamp.png".
+PyMOL>alias ..="cd .."
+PyMOL>load protein-5.0-p2p.pqr.dx
+PyMOL>load protein-5.0-p2p.pqr
+PyMOL>as surface
+PyMOL>show sticks, hetatm
+PyMOL>ramp_new ramp, protein-5.0-p2p.pqr, [-5, 0, 5], [red, white, blue]
+PyMOL>set surface_color, ramp
+PyMOL>set surface_ramp_above_mode
+PyMOL>disable ramp
+PyMOL>center
+PyMOL>zoom
+PyMOL>set opaque_background, off
+PyMOL>bg_color None
+PyMOL>png protein-5.0-pic.png, width=1000, height=1000, dpi=300
+PyMOL>hide everything
+PyMOL>enable ramp
+PyMOL>png rawRamp.png, width=1000, height=1000, dpi=300

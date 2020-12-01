@@ -46,5 +46,7 @@ Software for generating a surface charge based pH-profile map.
 
 ### ImageMagick
 
+- ImageMagick 6.9.7-4 Q16 x86_64 20170114
+
 > `sudo apt-get install imagemagick imagemagick-doc` 
 - [Commands](https://imagemagick.org/script/command-line-options.php#fill)

@@ -1,0 +1,26 @@
+Mon Nov 30 19:21:06 2020
+
+elec
+    mg-auto
+    mol 1
+    dime 225 161 161
+    lpbe
+    pdie 2.000
+    sdie 78.540
+    srfm smol
+    srad 1.400
+    bcfl sdh
+    temp 298.150
+    calc
+        id 1
+        grid 0.694 0.601 0.620
+        glen 155.467 96.108 99.232
+        totEnergy 2.612330382558E+05 kJ/mol
+    end
+    calc
+        id 2
+        grid 0.498 0.478 0.490
+        glen 111.451 76.534 78.372
+        totEnergy 4.247748138424E+05 kJ/mol
+    end
+end
