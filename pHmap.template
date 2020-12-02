@@ -11,7 +11,7 @@
 # ARG_OPTIONAL_SINGLE([rampcolors], ,[colors for ramp; 3 colors comma seperated\n], [red, white, blue])
 # ARG_OPTIONAL_BOOLEAN([surface_above], ,[surface_ramp_above_mode from PyMol\n], [on])
 
-# ARG_OPTIONAL_BOOLEAN([axis_update], ,[updates only the pH numbers of the x-axis\n])
+# ARG_OPTIONAL_BOOLEAN([axis_update], ,[updates only the axis labels\n])
 # ARG_OPTIONAL_SINGLE([digits], ,[digits of pH values in axis; if pH values like 5.25 change to 2!\n], [1])
 # ARG_OPTIONAL_SINGLE([font], ,[font of the axis; type <convert -list font>\nto get a full list of fonts available\n], [Helvetica])
 # ARG_OPTIONAL_SINGLE([fontsize], ,[font size], [40])
@@ -26,7 +26,7 @@
 # ARG_OPTIONAL_SINGLE([background], ,[background color: None, colors e.g. white, black])
 
 # ARG_HELP([+-------+\n| pHmap |\n+-------+\nby Erik Breslmayr, 2020\n \npHmap uses pdb2pqr, apbs to calcualte electrostatic surface potentials,\nwhich are visualized by generating 2D pictures with PyMol. Several pH's\nand pdb files can be processed and will be combined into one figure. On\nthe x-axis the pH's and on the y-axis the filenames will be added.\n \nExamples:\npHmap protein.pdb mutant.pdb -r '4 7 0.5' -l ligand.mol2 -s set_view.txt\npHmap protein.pdb mutant.pdb -r '4 7 0.5' -l ligand.mol2 -s set_view.txt --axis_update --font Helvetica --fontsize 60\npHmap protein.pdb mutant.pdb -r '4 7 0.25' -l ligand.mol2 -s set_view.txt --digits 2\n])
-# ARG_VERSION([echo $0 v2.0])
+# ARG_VERSION([echo $0 v0.2])
 # ARG_OPTIONAL_REPEATED([include],[I],[Directory for temporary folder],['/tmp'])
 # ARGBASH_GO
 
@@ -35,6 +35,7 @@
 SECONDS=0
 TEMP="$_arg_include"
 WPATH="$(pwd)"
+p2pDir="$WPATH/p2pFiles"
 export LC_NUMERIC="en_US.UTF-8"
 
 ### arguments var
@@ -72,12 +73,10 @@ picSize=500
 offsetFactor=$(echo $fontSize/12.5 | bc -l) # 12.5 tested offset to center ramp
 axisPageSize=$(echo $_arg_fontsize*1.15 | bc -l) # axispagehighnes is 1.25 times higher then fontsize
 
-picSizefactor=$(echo $axisPageSize/$fontSize) 
-rampWidthFactor=$(echo $_arg_size/$picSize | bc -l)
+rampFactor=$(echo $_arg_size/$picSize | bc -l)
 
-picHigh=$(echo $axisPageSize*$rampWidthFactor | bc -l)
-rampHigh=$(echo $fontSize*$rampWidthFactor | bc -l) 
-fontHigh=$(echo $axisPageSize*$rampWidthFactor | bc -l)
+rampHigh=$(echo $fontSize*$rampFactor | bc -l) 
+fontHigh=$(echo $axisPageSize*$rampFactor | bc -l)
 
 offset=$(echo $rampHigh/$offsetFactor | bc -l) 
 
@@ -136,9 +135,9 @@ hide everything
 enable ramp
 png rawRamp.png, width=$_arg_size, height=$_arg_size, dpi=300"> rendering.pml
         
-        printf "|%5s%-35s%20s|\n" "" "Rendering figure with PyMol @" "pH $i"
+        printf "|%5s%-35s%20s|\n\n" "" "Rendering figure with PyMol @" "pH $i"
         pymol -cq rendering.pml > $label-pymol-stout.log 2> $label-pymol-sterr.log
-    done
+        done
     list=$(ls -tr $WPATH/$label-*-pic.png)
     convert +append $list $label-pH_profile_pic.png    
 done
@@ -146,7 +145,7 @@ done
 
 numGen () {
 for i in $pHrange; do
-    convert -size ${_arg_size}x$picHigh -gravity $_arg_xalign -background  $backGround -weight $_arg_weight -stretch $_arg_stretch -style $_arg_style -pointsize $_arg_fontsize -family $_arg_font label:$i $WPATH/$i-number.png
+    convert -size ${_arg_size}x$fontHigh -gravity $_arg_xalign -background  $backGround -weight $_arg_weight -stretch $_arg_stretch -style $_arg_style -pointsize $_arg_fontsize -family $_arg_font label:$i $WPATH/$i-number.png
 done
 }
 
@@ -158,7 +157,7 @@ done
 }
 
 emptyGen () {
-    convert -size ${_arg_size}x$picHigh xc:None empty.png
+    convert -size ${_arg_size}x$fontHigh xc:None empty.png
 }
 rampGen () {  
     convert rawRamp.png -gravity South -crop ${_arg_size}x${rampHigh}+0+$offset -gravity Center -resize ${_arg_size}x$rampHigh -background $backGround -compose Copy -extent ${_arg_size}x$rampHigh .rampInter.png
@@ -196,14 +195,13 @@ mv *p2p* p2pFiles >/dev/null 2>/dev/null
 mv *-pic.png pngFiles >/dev/null 2>/dev/null
 mv *-number.png pngFiles >/dev/null 2>/dev/null
 mv *-label.png pngFiles >/dev/null 2>/dev/null
-rm io.mc >/dev/null 2>/dev/null
+rm io.mc .rampInter.png >/dev/null 2>/dev/null
 }
 
 ## SCRIPT 
 runScript () {
 date=$(date)
 printf "\n|%-30s%30s|\n\n" "pHmap started @" "$date"
-
 
 if [ $_arg_axis_update = "on" ]; then
     # only run convert
