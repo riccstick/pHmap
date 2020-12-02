@@ -67,12 +67,20 @@ else
     above_mode="set surface_ramp_above_mode"
 fi
 #### convert settings
-axisPageSize=$(echo $_arg_fontsize*1.25 | bc -l) # axispagehighnes is 1.25 times higher then fontsize
-picSizefactor=$(echo $_arg_fontsize/50) #50 from axispagesize default
-picHigh=$(echo $axisPageSize*$picSizefactor | bc -l)
-rampWidthFactor=$(echo $_arg_size/500 | bc -l) # 500 is default --size flag!!!
-rampHigh=$(echo $axisPageSize*$rampWidthFactor | bc -l)
-offset=$(echo $rampHigh/4.545454545 | bc -l) # from fontsize 40 comes 50 for axisPageSize and 11 is needed as offset, therefore 50/11 as factor to center ramp.
+fontSize=46
+picSize=500
+offsetFactor=$(echo $fontSize/12.5 | bc -l) # 12.5 tested offset to center ramp
+axisPageSize=$(echo $_arg_fontsize*1.15 | bc -l) # axispagehighnes is 1.25 times higher then fontsize
+
+picSizefactor=$(echo $axisPageSize/$fontSize) 
+rampWidthFactor=$(echo $_arg_size/$picSize | bc -l)
+
+picHigh=$(echo $axisPageSize*$rampWidthFactor | bc -l)
+rampHigh=$(echo $fontSize*$rampWidthFactor | bc -l) 
+fontHigh=$(echo $axisPageSize*$rampWidthFactor | bc -l)
+
+offset=$(echo $rampHigh/$offsetFactor | bc -l) 
+
 backGround="$_arg_background" # background color
 if [[ -z "$backGround" ]]; then
     backGroundTrans="off"
@@ -153,7 +161,8 @@ emptyGen () {
     convert -size ${_arg_size}x$picHigh xc:None empty.png
 }
 rampGen () {  
-    convert rawRamp.png -gravity South -crop ${_arg_size}x${rampHigh}+0+$offset -gravity Center -resize ${_arg_size}x$rampHigh -background $backGround -compose Copy -extent ${_arg_size}x$rampHigh ramp.png
+    convert rawRamp.png -gravity South -crop ${_arg_size}x${rampHigh}+0+$offset -gravity Center -resize ${_arg_size}x$rampHigh -background $backGround -compose Copy -extent ${_arg_size}x$rampHigh .rampInter.png
+    convert .rampInter.png -gravity Center -resize ${_arg_size}x$fontHigh -background None -compose Copy -extent ${_arg_size}x$fontHigh ramp.png
     }
 
 picCombine () {
