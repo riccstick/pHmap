@@ -12,9 +12,8 @@ Software for generating a surface charge based pH-profile map.
 
 ## Installation
 
-- Developed under Ubuntu_20.04.1 LTS
-
-- Bash script, just make it executable and run
+- Tested under Ubuntu_20, Ubuntu_16 and MacOSx_Catalina_10.15.7
+- Programs: APBS_v3.0.0; pdb2pqr_v2.1.1; pymol_v2.3 & v2.4; ImageMagick 6.9.7-4 Q16 x86_64 & 7.0.10-45 Q16 x86_64
 
 ### SourceCode compiling
 
@@ -30,23 +29,32 @@ Software for generating a surface charge based pH-profile map.
 
 ### PDB2PQR
 
-- Download from Github: [pdb2pqr_2.1.1](https://github.com/Electrostatics/pdb2pqr/releases/tag/v2.1.1)  for Linux [pdb2pqr.zip](https://github.com/Electrostatics/pdb2pqr/releases/download/v2.1.1/pdb2pqr-linux-bin64-2.1.1.tar.gz)
+- Download from Github: [pdb2pqr_2.1.1](https://github.com/Electrostatics/pdb2pqr/releases/tag/v2.1.1)
 - [Install](https://erikbreslmayr.medium.com/installing-pre-compiled-apbs-for-electrostatic-surface-and-pdb2pqr-for-protonation-state-15fd068574b9)
 
 ### ABPS
 
-- Download from Github: [ABTS_v3.0.0](https://github.com/Electrostatics/apbs/releases/tag/v3.0.0) for Linux [apbs.zip](https://github.com/Electrostatics/apbs/releases/download/v3.0.0/APBS-3.0.0_Linux.zip)
+- Download from Github: [ABTS_v3.0.0](https://github.com/Electrostatics/apbs/releases/tag/v3.0.0)
 - [Install](https://erikbreslmayr.medium.com/installing-pre-compiled-apbs-for-electrostatic-surface-and-pdb2pqr-for-protonation-state-15fd068574b9)
 
 ### PyMol
 
-- Open Source PyMol v2.3
+- Open Source PyMol v2.x
+- Ubuntu
 
 > `sudo apt install pymol`
 
+  - Mac
+
+> `brew install brewsci/bio/pymol`
+
 ### ImageMagick
 
-- ImageMagick 6.9.7-4 Q16 x86_64 20170114
+- Ubuntu
 
-> `sudo apt-get install imagemagick imagemagick-doc` 
+> `sudo apt-get install imagemagick`
+-  Mac
+
+> `brew install imagemagick` 
+
 - [Commands](https://imagemagick.org/script/command-line-options.php#fill)
