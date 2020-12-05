@@ -1,7 +1,7 @@
 # pHmap
 Software for generating a surface charge based pH-profile map.
 
-<img src="./pH_profile+label.png" alt="pH_profile" style="zoom:50%;" />
+<img src="./pH_profile+label_axis.png" alt="pH_profile" style="zoom:50%;" />
 
 ## Requirements
 - [PDB2PQR](http://www.poissonboltzmann.org/) - for calculation of protonation states
@@ -53,7 +53,8 @@ Software for generating a surface charge based pH-profile map.
 - Ubuntu
 
 > `sudo apt-get install imagemagick`
--  Mac
+>
+> -  Mac
 
 > `brew install imagemagick` 
 

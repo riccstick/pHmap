@@ -22,11 +22,17 @@
 # ARG_OPTIONAL_BOOLEAN([ramp], ,[enable/disable ramp\n], [on])
 # ARG_OPTIONAL_SINGLE([xalign], ,[x-axis alignment of the pH value text; type  <convert -list gravity>\n to get a list of available alignment settings\n], [Center])
 # ARG_OPTIONAL_SINGLE([yalign], ,[y-axis alignment of the label text; type  <convert -list gravity>\n to get a list of available alignment settings\n], [Center])
+
+# ARG_OPTIONAL_BOOLEAN([axisline], ,[enable/disable axisline\n], [on])
+# ARG_OPTIONAL_SINGLE([axisline_strokewidth], ,[line thickness of axis\n], [5])
+# ARG_OPTIONAL_SINGLE([axisline_color], ,[color of of axis\n], [black])
+# ARG_OPTIONAL_SINGLE([axislineoffset], ,[offset in % of y and x axisline\n], [5])
+
 # ARG_OPTIONAL_SINGLE([size], ,[individual picture size: default means 500x500 pixel (quadratic; 300 dpi)\n], [500])
 # ARG_OPTIONAL_SINGLE([background], ,[background color: None, colors e.g. white, black])
 
 # ARG_HELP([+-------+\n| pHmap |\n+-------+\nby Erik Breslmayr, 2020\n \npHmap uses pdb2pqr, apbs to calcualte electrostatic surface potentials,\nwhich are visualized by generating 2D pictures with PyMol. Several pH's\nand pdb files can be processed and will be combined into one figure. On\nthe x-axis the pH's and on the y-axis the filenames will be added.\n \nExamples:\npHmap protein.pdb mutant.pdb -r '4 7 0.5' -l ligand.mol2 -s set_view.txt\npHmap protein.pdb mutant.pdb -r '4 7 0.5' -l ligand.mol2 -s set_view.txt --axis_update --font Helvetica --fontsize 60\npHmap protein.pdb mutant.pdb -r '4 7 0.25' -l ligand.mol2 -s set_view.txt --digits 2\n])
-# ARG_VERSION([echo $0 v0.2])
+# ARG_VERSION([echo $0 v0.3])
 # ARG_OPTIONAL_REPEATED([include],[I],[Directory for temporary folder],['/tmp'])
 # ARGBASH_GO
 
@@ -138,6 +144,7 @@ png rawRamp.png, width=$_arg_size, height=$_arg_size, dpi=300"> rendering.pml
         printf "|%5s%-35s%20s|\n\n" "" "Rendering figure with PyMol @" "pH $i"
         pymol -cq rendering.pml > $label-pymol-stout.log 2> $label-pymol-sterr.log
         done
+    #  (1) combining surfacemap pictures for each pdb file e.g. protein-pH_profile_pic.png
     list=$(ls -tr $WPATH/$label-*-pic.png)
     convert +append $list $label-pH_profile_pic.png    
 done
@@ -157,31 +164,82 @@ done
 }
 
 emptyGen () {
-    convert -size ${_arg_size}x$fontHigh xc:None empty.png
+    convert -size ${_arg_size}x$fontHigh xc:$backGround .empty.png
+    convert -size ${_arg_size}x$_arg_axisline_strokewidth xc:$backGround .emptyyadd.png
+    convert -size ${_arg_axisline_strokewidth}x$fontHigh xc:$backGround .emptyxadd.png
+    convert -size ${_arg_axisline_strokewidth}x${_arg_axisline_strokewidth} xc:$backGround .emptysquare.png
 }
 rampGen () {  
     convert rawRamp.png -gravity South -crop ${_arg_size}x${rampHigh}+0+$offset -gravity Center -resize ${_arg_size}x$rampHigh -background $backGround -compose Copy -extent ${_arg_size}x$rampHigh .rampInter.png
     convert .rampInter.png -gravity Center -resize ${_arg_size}x$fontHigh -background None -compose Copy -extent ${_arg_size}x$fontHigh ramp.png
     }
-
+axisGen () {
+    if [ $_arg_axisline = "off" ]; then
+        _arg_axisline_color=$backGround
+    fi
+    strokeWidth=$(echo $_arg_axisline_strokewidth*2 | bc -l) #to fill the recbox with linecolor
+    cutoffBegin=$(echo $_arg_axislineoffset/100 | bc -l)
+    cutoffEnd=$(echo 1-$cutoffBegin | bc -l)
+    percentOffBegin=$(echo $_arg_size*$cutoffBegin | bc -l)
+    percentOffEnd=$(echo $_arg_size*$cutoffEnd | bc -l)
+    #xaxis
+    convert -size ${_arg_size}x$_arg_axisline_strokewidth xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,0 $_arg_size,0" .xaxis.png
+    convert -size ${_arg_size}x$_arg_axisline_strokewidth xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line $percentOffBegin,0 $_arg_size,0" .xaxisBegin.png
+    convert -size ${_arg_size}x$_arg_axisline_strokewidth xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,0 $percentOffEnd,0" .xaxisEnd.png
+    convert -size ${_arg_size}x$_arg_axisline_strokewidth xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line $percentOffBegin,0 $percentOffEnd,0" .xaxisBeginEnd.png
+    #yaxis
+    convert -size ${_arg_axisline_strokewidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,0 0,$_arg_size" .yaxis.png
+    convert -size ${_arg_axisline_strokewidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,$percentOffBegin 0,$_arg_size" .yaxisBegin.png
+    convert -size ${_arg_axisline_strokewidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,0 0,$percentOffEnd" .yaxisEnd.png
+    convert -size ${_arg_axisline_strokewidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,$percentOffBegin 0,$percentOffEnd" .yaxisBeginEnd.png
+}
+    
 picCombine () {
 printf "\n|%-60s|\n" "Generating final figure and cleaning up"
-#xaxis
+# (2) combining xaxisLine
+listCount=$(ls -tr $WPATH/*-number.png | wc -l)
+listCountMid=$(echo ${listCount}-2 | bc -l)
+for i in $listCountMid;do cp .xaxis.png .xaxis_$i.png; done
+axisList=$(ls -tr .xaxis_*.png)
+## (2.1) depending on pH range make xaxisline
+if (( "$listCount" >= "3" ));then
+    convert +append .xaxisBegin.png $axisList .xaxisEnd.png xaxisLine.png
+elif [ "$listCount" = "2" ];then
+    convert +append .xaxisBegin.png .xaxisEnd.png xaxisLine.png
+else
+    convert +append .xaxisBeginEnd.png xaxisLine.png
+fi
+# (3) combining pH numbers e.g. 5.0-number.png
 list=$(ls -tr $WPATH/*-number.png)
 convert +append $list xaxis_number.png
-#yaxis
+# (4) combining (1) (2) and (3)
+list=$(ls -tr *-pH_profile_pic.png)
+convert -append $list xaxisLine.png xaxis_number.png .pH_profile_pic.png 
+# (5) combining labels of pdb files
 list=$(ls -tr $WPATH/*-label.png)
 if [ $_arg_ramp = "on" ]; then
-    convert -append $list ramp.png yaxis_label.png
+    convert -append $list .emptyyadd.png ramp.png yaxis_label.png
 
 else
-    convert -append $list empty.png yaxis_label.png
+    convert -append $list .emptyyadd.png .empty.png yaxis_label.png
 fi
-#pic and xaxis
-list=$(ls -tr *-pH_profile_pic.png)
-convert -append $list xaxis_number.png pH_profile.png
-#pic, xaxis and yaxis
-convert +append yaxis_label.png pH_profile.png pH_profile+label.png
+# (6) combining yaxisLine
+listCount=$(ls -tr $WPATH/*-label.png | wc -l)
+listCountMid=$(echo ${listCount}-2 | bc -l)
+for i in $listCountMid;do cp .yaxis.png .yaxis_$i.png; done
+axisList=$(ls -tr .yaxis_*.png)
+## (6.1) depending on label make yaxisline
+if (( "$listCount" >= "3" ));then
+    convert -append .yaxisBegin.png $axisList .yaxisEnd.png .yaxisLine.png
+elif [ "$listCount" = "2" ];then
+    convert -append .yaxisBegin.png .yaxisEnd.png .yaxisLine.png
+else
+    convert -append .yaxisBeginEnd.png .yaxisLine.png
+fi
+# (7) combining yaxisline and emptysquare and emptyxadd
+convert -append .yaxisLine.png .emptysquare.png .emptyxadd.png yaxisLine.png
+# (9) combining (5) (8) and (4)
+convert +append yaxis_label.png yaxisLine.png .pH_profile_pic.png pH_profile+label.png
 }
 
 cleanUp () {
@@ -195,7 +253,8 @@ mv *p2p* p2pFiles >/dev/null 2>/dev/null
 mv *-pic.png pngFiles >/dev/null 2>/dev/null
 mv *-number.png pngFiles >/dev/null 2>/dev/null
 mv *-label.png pngFiles >/dev/null 2>/dev/null
-rm io.mc .rampInter.png >/dev/null 2>/dev/null
+
+rm io.mc .rampInter.png .*.png >/dev/null 2>/dev/null
 }
 
 ## SCRIPT 
@@ -212,6 +271,7 @@ if [ $_arg_axis_update = "on" ]; then
     labelGen
     emptyGen
     rampGen
+    axisGen
     picCombine
 else
     picGen
@@ -219,6 +279,7 @@ else
     labelGen
     emptyGen
     rampGen
+    axisGen
     picCombine
 fi
 cleanUp
