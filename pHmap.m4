@@ -11,10 +11,10 @@ _pHmap ()
 	COMPREPLY=()
 	cur="${COMP_WORDS[COMP_CWORD]}"
 	prev="${COMP_WORDS[COMP_CWORD-1]}"
-	all_long_opts="--ph_range --ligand --set_view --level --rampcolors --surface_above --axis_update --digits --font --fontsize --weight --stretch --style --ramp --xalign --yalign --axisline --axisline_strokewidth --axisline_color --axislineoffset --size --background --help --version --include "
-	all_short_opts="-r -l -s -h -v -I "
+	all_long_opts="--ph_range --ligand --set_view --level --rampcolors --surface_above --axis_update --digits --font --fontsize --weight --stretch --style --ramp --xalign --yalign --axisline --axisline_strokewidth --axisline_color --axislineoffset --activity --activity_file --activity_radius --gridlinewidth --gridplace --size --background --help --version --include "
+	all_short_opts="-r -l -s -a -h -v -I "
 	case "$prev" in
-		--ph_range|-r|--ligand|-l|--set_view|-s|--level|--rampcolors|--digits|--font|--fontsize|--weight|--stretch|--style|--xalign|--yalign|--axisline_strokewidth|--axisline_color|--axislineoffset|--size|--background|--include|-I)
+		--ph_range|-r|--ligand|-l|--set_view|-s|--level|--rampcolors|--digits|--font|--fontsize|--weight|--stretch|--style|--xalign|--yalign|--axisline_strokewidth|--axisline_color|--axislineoffset|--activity_file|-a|--activity_radius|--gridlinewidth|--gridplace|--size|--background|--include|-I)
 			COMPREPLY=( $(compgen -o bashdefault -o default -- "${cur}") )
 			return 0
 			;;

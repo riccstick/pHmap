@@ -24,15 +24,23 @@
 # ARG_OPTIONAL_SINGLE([yalign],[],[y-axis alignment of the label text; type  <convert -list gravity>\n to get a list of available alignment settings\n],[Center])
 
 # ARG_OPTIONAL_BOOLEAN([axisline],[],[enable/disable axisline\n],[on])
-# ARG_OPTIONAL_SINGLE([axisline_strokewidth],[],[line thickness of axis\n],[5])
+# ARG_OPTIONAL_SINGLE([axisline_strokewidth],[],[line thickness of axis\n],[4])
 # ARG_OPTIONAL_SINGLE([axisline_color],[],[color of of axis\n],[black])
-# ARG_OPTIONAL_SINGLE([axislineoffset],[],[offset in % of y and x axisline\n],[5])
+# ARG_OPTIONAL_SINGLE([axislineoffset],[],[offset in % of y and x axisline\n],[7])
+
+# ARG_OPTIONAL_BOOLEAN([activity],[],[enable/disable activity lollipop plot\n],[on])
+# ARG_OPTIONAL_SINGLE([activity_file],[a],[input file for activity lollipop plotting\n])
+# ARG_OPTIONAL_SINGLE([activity_dataformat],[],[input file format -> with/without error bars; xydy or  xy\n],[xydy])
+# ARG_OPTIONAL_SINGLE([activity_radius],[],[adjusts the circle size for the activity lollipop\n],[10])
+# ARG_OPTIONAL_SINGLE([gridlinewidth],[],[pixel for how width the mark should be\n],[12])
+# ARG_OPTIONAL_SINGLE([gridplace],[],[placement of the gridmarks; inner/outer = +/- \n],[-])
+# ARG_OPTIONAL_SINGLE([grid_fontsize],[],[fontsize of grid label \n],[25])
 
 # ARG_OPTIONAL_SINGLE([size],[],[individual picture size: default means 500x500 pixel (quadratic; 300 dpi)\n],[500])
 # ARG_OPTIONAL_SINGLE([background],[],[background color: None, colors e.g. white, black])
 
 # ARG_HELP([+-------+\n| pHmap |\n+-------+\nby Erik Breslmayr, 2020\n \npHmap uses pdb2pqr, apbs to calcualte electrostatic surface potentials,\nwhich are visualized by generating 2D pictures with PyMol. Several pH's\nand pdb files can be processed and will be combined into one figure. On\nthe x-axis the pH's and on the y-axis the filenames will be added.\n \nExamples:\npHmap protein.pdb mutant.pdb -r '4 7 0.5' -l ligand.mol2 -s set_view.txt\npHmap protein.pdb mutant.pdb -r '4 7 0.5' -l ligand.mol2 -s set_view.txt --axis_update --font Helvetica --fontsize 60\npHmap protein.pdb mutant.pdb -r '4 7 0.25' -l ligand.mol2 -s set_view.txt --digits 2\n])
-# ARG_VERSION([echo $0 v0.3.1])
+# ARG_VERSION([echo $0 v0.4])
 # ARG_OPTIONAL_REPEATED([include],[I],[Directory for temporary folder],['/tmp'])
 # ARGBASH_GO()
 # needed because of Argbash --> m4_ignore([
@@ -52,7 +60,7 @@ die()
 
 begins_with_short_option()
 {
-	local first_option all_short_options='rlshvI'
+	local first_option all_short_options='rlsahvI'
 	first_option="${1:0:1}"
 	test "$all_short_options" = "${all_short_options/$first_option/}" && return 1 || return 0
 }
@@ -78,9 +86,16 @@ _arg_ramp="on"
 _arg_xalign="Center"
 _arg_yalign="Center"
 _arg_axisline="on"
-_arg_axisline_strokewidth="5"
+_arg_axisline_strokewidth="4"
 _arg_axisline_color="black"
-_arg_axislineoffset="5"
+_arg_axislineoffset="7"
+_arg_activity="on"
+_arg_activity_file=
+_arg_activity_dataformat="xydy"
+_arg_activity_radius="10"
+_arg_gridlinewidth="12"
+_arg_gridplace="-"
+_arg_grid_fontsize="25"
 _arg_size="500"
 _arg_background=
 _arg_include=('/tmp')
@@ -103,7 +118,7 @@ pHmap protein.pdb mutant.pdb -r '4 7 0.5' -l ligand.mol2 -s set_view.txt
 pHmap protein.pdb mutant.pdb -r '4 7 0.5' -l ligand.mol2 -s set_view.txt --axis_update --font Helvetica --fontsize 60
 pHmap protein.pdb mutant.pdb -r '4 7 0.25' -l ligand.mol2 -s set_view.txt --digits 2
 "
-	printf 'Usage: %s [-r|--ph_range <arg>] [-l|--ligand <arg>] [-s|--set_view <arg>] [--level <arg>] [--rampcolors <arg>] [--(no-)surface_above] [--(no-)axis_update] [--digits <arg>] [--font <arg>] [--fontsize <arg>] [--weight <arg>] [--stretch <arg>] [--style <arg>] [--(no-)ramp] [--xalign <arg>] [--yalign <arg>] [--(no-)axisline] [--axisline_strokewidth <arg>] [--axisline_color <arg>] [--axislineoffset <arg>] [--size <arg>] [--background <arg>] [-h|--help] [-v|--version] [-I|--include <arg>] [--] <pdb-1> [<pdb-2>] ... [<pdb-n>] ...\n' "$0"
+	printf 'Usage: %s [-r|--ph_range <arg>] [-l|--ligand <arg>] [-s|--set_view <arg>] [--level <arg>] [--rampcolors <arg>] [--(no-)surface_above] [--(no-)axis_update] [--digits <arg>] [--font <arg>] [--fontsize <arg>] [--weight <arg>] [--stretch <arg>] [--style <arg>] [--(no-)ramp] [--xalign <arg>] [--yalign <arg>] [--(no-)axisline] [--axisline_strokewidth <arg>] [--axisline_color <arg>] [--axislineoffset <arg>] [--(no-)activity] [-a|--activity_file <arg>] [--activity_dataformat <arg>] [--activity_radius <arg>] [--gridlinewidth <arg>] [--gridplace <arg>] [--grid_fontsize <arg>] [--size <arg>] [--background <arg>] [-h|--help] [-v|--version] [-I|--include <arg>] [--] <pdb-1> [<pdb-2>] ... [<pdb-n>] ...\n' "$0"
 	printf '\t%s\n' "<pdb>: pdb files to process)"
 	printf '\t%s\n' "-r, --ph_range: range of pH's in quotes!; 'start stop step' e.g. '5 7 0.5' (no default)"
 	printf '\t%s\n' "-l, --ligand: input mol2 file (no default)"
@@ -143,11 +158,25 @@ pHmap protein.pdb mutant.pdb -r '4 7 0.25' -l ligand.mol2 -s set_view.txt --digi
 	printf '\t%s\n' "--axisline, --no-axisline: enable/disable axisline
 		 (on by default)"
 	printf '\t%s\n' "--axisline_strokewidth: line thickness of axis
-		 (default: '5')"
+		 (default: '4')"
 	printf '\t%s\n' "--axisline_color: color of of axis
 		 (default: 'black')"
 	printf '\t%s\n' "--axislineoffset: offset in % of y and x axisline
-		 (default: '5')"
+		 (default: '7')"
+	printf '\t%s\n' "--activity, --no-activity: enable/disable activity lollipop plot
+		 (on by default)"
+	printf '\t%s\n' "-a, --activity_file: input file for activity lollipop plotting
+		 (no default)"
+	printf '\t%s\n' "--activity_dataformat: input file format -> with/without error bars; xydy or  xy
+		 (default: 'xydy')"
+	printf '\t%s\n' "--activity_radius: adjusts the circle size for the activity lollipop
+		 (default: '10')"
+	printf '\t%s\n' "--gridlinewidth: pixel for how width the mark should be
+		 (default: '12')"
+	printf '\t%s\n' "--gridplace: placement of the gridmarks; inner/outer = +/-
+		 (default: '-')"
+	printf '\t%s\n' "--grid_fontsize: fontsize of grid label
+		 (default: '25')"
 	printf '\t%s\n' "--size: individual picture size: default means 500x500 pixel (quadratic; 300 dpi)
 		 (default: '500')"
 	printf '\t%s\n' "--background: background color: None, colors e.g. white, black (no default)"
@@ -329,6 +358,61 @@ parse_commandline()
 			--axislineoffset=*)
 				_arg_axislineoffset="${_key##--axislineoffset=}"
 				;;
+			--no-activity|--activity)
+				_arg_activity="on"
+				test "${1:0:5}" = "--no-" && _arg_activity="off"
+				;;
+			-a|--activity_file)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_activity_file="$2"
+				shift
+				;;
+			--activity_file=*)
+				_arg_activity_file="${_key##--activity_file=}"
+				;;
+			-a*)
+				_arg_activity_file="${_key##-a}"
+				;;
+			--activity_dataformat)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_activity_dataformat="$2"
+				shift
+				;;
+			--activity_dataformat=*)
+				_arg_activity_dataformat="${_key##--activity_dataformat=}"
+				;;
+			--activity_radius)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_activity_radius="$2"
+				shift
+				;;
+			--activity_radius=*)
+				_arg_activity_radius="${_key##--activity_radius=}"
+				;;
+			--gridlinewidth)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_gridlinewidth="$2"
+				shift
+				;;
+			--gridlinewidth=*)
+				_arg_gridlinewidth="${_key##--gridlinewidth=}"
+				;;
+			--gridplace)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_gridplace="$2"
+				shift
+				;;
+			--gridplace=*)
+				_arg_gridplace="${_key##--gridplace=}"
+				;;
+			--grid_fontsize)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_grid_fontsize="$2"
+				shift
+				;;
+			--grid_fontsize=*)
+				_arg_grid_fontsize="${_key##--grid_fontsize=}"
+				;;
 			--size)
 				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
 				_arg_size="$2"
@@ -354,11 +438,11 @@ parse_commandline()
 				exit 0
 				;;
 			-v|--version)
-				echo $0 v0.3.1
+				echo $0 v0.4
 				exit 0
 				;;
 			-v*)
-				echo $0 v0.3.1
+				echo $0 v0.4
 				exit 0
 				;;
 			-I|--include)
@@ -525,15 +609,231 @@ png rawRamp.png, width=$_arg_size, height=$_arg_size, dpi=300"> rendering.pml
         printf "|%5s%-35s%20s|\n\n" "" "Rendering figure with PyMol @" "pH $i"
         pymol -cq rendering.pml > $label-pymol-stout.log 2> $label-pymol-sterr.log
         done
-    #  (1) combining surfacemap pictures for each pdb file e.g. protein-pH_profile_pic.png
-    list=$(ls -tr $WPATH/$label-*-pic.png)
-    convert +append $list $label-pH_profile_pic.png
+done
+}
+picreGen () {
+for l in ${_arg_pdb[*]}; do
+    label=$(echo $l | cut -d "." -f 1)
+    for i in $pHrange; do
+        location="$WPATH/p2pFiles"
+        printf "
+load $location/$label-$i-p2p.pqr.dx
+load $location/$label-$i-p2p.pqr
+as surface
+show sticks, hetatm
+ramp_new ramp, $label-$i-p2p.pqr, [-$_arg_level, 0, $_arg_level], [$_arg_rampcolors]
+set surface_color, ramp
+$above_mode
+disable ramp
+$view
+center
+zoom
+set opaque_background, $backGroundTrans
+bg_color $backGround
+png $label-$i-pic.png, width=$_arg_size, height=$_arg_size, dpi=300
+hide everything
+enable ramp
+png rawRamp.png, width=$_arg_size, height=$_arg_size, dpi=300"> rendering.pml
+
+        printf "|%5s%-35s%20s|\n\n" "" "Rendering figure with PyMol @" "pH $i"
+        pymol -cq rendering.pml > $label-pymol-stout.log 2> $label-pymol-sterr.log
+        done
 done
 }
 
+axisGen () {
+    if [ $_arg_axisline = "off" ]; then
+        _arg_axisline_color=$backGround
+    fi
+    strokeWidth=$(echo $_arg_axisline_strokewidth*1 | bc -l)
+    strokeWidthhalf=$(echo $_arg_axisline_strokewidth/2 | bc -l)
+    gridwidth=$(echo $_arg_axisline_strokewidth*$_arg_grid_fontsize+$_arg_gridlinewidth | bc -l)
+    gridmiddle=$(echo $gridwidth/2 | bc -l)
+    cutoffBegin=$(echo $_arg_axislineoffset/100 | bc -l)
+    cutoffEnd=$(echo 1-$cutoffBegin | bc -l)
+    percentOffBegin=$(echo $_arg_size*$cutoffBegin | bc -l)
+    percentOffEnd=$(echo $_arg_size*$cutoffEnd | bc -l)
+    gridfactor=${_arg_gridplace}$_arg_gridlinewidth
+    gridlinewidth=$(echo $gridmiddle$gridfactor | bc -l)
+    gridmiddleFit=$(echo $gridmiddle $_arg_gridplace - $strokeWidthhalf | bc -l)
+    grid100=$percentOffBegin
+    grid75=$(echo $percentOffEnd*0.25 | bc -l)
+    grid50=$(echo $percentOffEnd*0.5 | bc -l)
+    grid25=$(echo $percentOffEnd*0.75 | bc -l)
+    grid0=$percentOffEnd
+    halfpointsize=$(echo $_arg_grid_fontsize/2.3 | bc -l)
+    gridlabel100=$(echo $grid100 - $halfpointsize | bc -l)
+    gridlabel75=$(echo $grid75 - $halfpointsize | bc -l)
+    gridlabel50=$(echo $grid50 - $halfpointsize | bc -l)
+    gridlabel25=$(echo $grid25 - $halfpointsize | bc -l)
+    gridlabel0=$(echo $grid0 - $halfpointsize | bc -l)
+    gridlabelplace=$(echo $_arg_gridlinewidth*70/12 | bc -l)
+
+    # actwidth same as in actGraph function !!!
+    actwidth=$(echo $_arg_activity_radius*2.25 | bc -l)
+    numwidth=$(echo ${_arg_size} + $actwidth | bc -l)
+
+    #xaxis no activity
+    xaxisnoAct () {
+    convert -size ${_arg_size}x${gridwidth} xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,$gridmiddle $_arg_size,$gridmiddle" .xaxis.png
+    convert -size ${_arg_size}x${gridwidth} xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line $percentOffBegin,$gridmiddle $_arg_size,$gridmiddle"\
+    -pointsize $_arg_grid_fontsize -strokeWidth 0 -fill Black -font $_arg_font -gravity West -draw "text 0,0  'pH'" \
+    .xaxisBegin.png
+    convert -size ${_arg_size}x${gridwidth} xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,$gridmiddle $percentOffEnd,$gridmiddle" .xaxisEnd.png
+    convert -size ${_arg_size}x${gridwidth} xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line $percentOffBegin,$gridmiddle $percentOffEnd,$gridmiddle" .xaxisBeginEnd.png
+    }
+    #xaxis activity
+    xaxisAct () {
+    xaxismiddle=$(echo $numwidth/2 | bc -l)
+    gridlinewidthx=$(echo $gridmiddle $_arg_gridplace - $_arg_gridlinewidth | bc -l)
+    pointsconnectposition=$(echo $_arg_size+$actwidth/2 | bc -l)
+    pointsconnect="$pointsconnectposition,$gridmiddle $pointsconnectposition,0"
+
+    convert -size ${numwidth}x${gridwidth} xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None \
+    -strokewidth 3.5 -draw "fill none stroke darkgrey line $pointsconnect " \
+    -draw "line 0,$gridmiddle $numwidth,$gridmiddle" \
+    -draw "line $xaxismiddle,$gridlinewidthx $xaxismiddle,$gridmiddle" \
+    .xaxis.png
+
+    convert -size ${numwidth}x${gridwidth} xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None \
+    -strokewidth 3.5 -draw "fill none stroke darkgrey line $pointsconnect " \
+    -draw "line $percentOffBegin,$gridmiddle $numwidth,$gridmiddle" \
+    -draw "line $xaxismiddle,$gridlinewidthx $xaxismiddle,$gridmiddle" \
+    -pointsize $_arg_grid_fontsize -strokeWidth 0 -fill Black -font $_arg_font -gravity West -draw "text 0,0  'pH'" \
+    .xaxisBegin.png
+
+    convert -size ${numwidth}x${gridwidth} xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None \
+    -strokewidth 3.5 -draw "fill none stroke darkgrey line $pointsconnect " \
+    -draw "line 0,$gridmiddle $numwidth,$gridmiddle" \
+    -draw "line $xaxismiddle,$gridlinewidthx $xaxismiddle,$gridmiddle" \
+    .xaxisEnd.png
+
+    convert -size ${numwidth}x${gridwidth} xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None \
+    -draw "line $percentOffBegin,$gridmiddle $numwidth,$gridmiddle" \
+    -draw "line $xaxismiddle,$gridlinewidthx $xaxismiddle,$gridmiddle" \
+    .xaxisBeginEnd.png
+    }
+    #yaxis
+    convert -size ${gridwidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line $gridmiddle,0 $gridmiddle,$_arg_size" .yaxis.png
+    convert -size ${gridwidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None \
+    -draw "line $gridmiddle,$percentOffBegin $gridmiddle,$_arg_size" \
+    .yaxisBegin.png
+    convert -size ${gridwidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line $gridmiddle,0 $gridmiddle,$percentOffEnd" .yaxisEnd.png
+    convert -size ${gridwidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None \
+    -draw "line $gridmiddle,$percentOffBegin $gridmiddle,$percentOffEnd" \
+    .yaxisBeginEnd.png
+    convert -size ${gridwidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None \
+    -draw "line $gridmiddle,$percentOffBegin $gridmiddle,$percentOffEnd" \
+    -draw "line $gridlinewidth,$grid100 $gridmiddleFit,$grid100" \
+    -draw "line $gridlinewidth,$grid75 $gridmiddleFit,$grid75" \
+    -draw "line $gridlinewidth,$grid50 $gridmiddleFit,$grid50" \
+    -draw "line $gridlinewidth,$grid25 $gridmiddleFit,$grid25" \
+    -draw "line $gridlinewidth,$grid0 $gridmiddleFit,$grid0" \
+    -pointsize $_arg_grid_fontsize -strokeWidth 0 -fill Black -font $_arg_font -gravity NorthEast -draw "text $gridlabelplace,$gridlabel100  '100'" \
+    -draw "text $gridlabelplace,$gridlabel75  '75'" \
+    -draw "text $gridlabelplace,$gridlabel50  '50'" \
+    -draw "text $gridlabelplace,$gridlabel25  '25'" \
+    -draw "text $gridlabelplace,$gridlabel0  '0'" \
+    -pointsize $_arg_grid_fontsize -strokeWidth 0 -fill Black -font $_arg_font -gravity South -draw "text 0,0  '%'" \
+    .yaxisBeginEnd_grid.png
+
+    if [ $_arg_activity = "on" ]; then
+        xaxisAct
+    else
+        xaxisnoAct
+    fi
+}
+
+actGraph () {
+####DONE                1.add bottom black line to fit xaxisline
+####DONE                2.change yaxisline to always scale 5% offset
+##TODO                  3.add xaxisline for each pdb file
+####DONE                4.add actpics to final picture
+##TODO                  5.enable/disalbe actpics in final
+##TODO                  6.check the check function
+
+    #var for xaxis and lollipop!!!
+    window=$(echo $_arg_axislineoffset/100 | bc -l)
+    windowfactor=$(echo 100-$_arg_axislineoffset*2 | bc -l)
+    datapercent=$actValue
+    errdatapercent=$actErrValue
+    scalefactor=$(echo 100/$windowfactor*100 | bc -l)
+    dataadj=$(echo $datapercent/$scalefactor | bc -l)
+    data=$(echo 1-$window-$dataadj | bc -l)
+    errdata=$(echo $errdatapercent/$scalefactor | bc -l)
+
+    insert=$(echo $_arg_size*$data | bc -l)
+    errvalue=$(echo $_arg_size*$errdata | bc -l)
+
+    #calc
+    actwidth=$(echo $_arg_activity_radius*2.25 | bc -l)
+    linewidth=$(echo $actwidth/2 | bc -l)
+    linepoint=$(echo ${insert}+$_arg_activity_radius | bc -l)
+    errplus=$(echo ${insert}-$errvalue | bc -l)
+    errminus=$(echo ${insert}+$errvalue | bc -l)
+    errstart=$(echo ${linewidth}-$_arg_activity_radius*0.75 | bc -l)
+    errend=$(echo ${linewidth}+$_arg_activity_radius*0.75 | bc -l)
+
+    #points
+    points="$linewidth,$linepoint $linewidth,$_arg_size"
+    lolli="$linewidth,$insert"
+    errtop="$errstart,$errplus $errend,$errplus"
+    errbottom="$errstart,$errminus $errend,$errminus"
+    errline="$linewidth,$errplus $linewidth,$errminus"
+
+    circles=$(for point in $lolli; do
+            x=$(echo "$point" | cut -d, -f1)
+            y=$(echo "$point" | cut -d, -f2)
+            y2=$(convert xc: -format '%[fx:'"$y"'+'"$_arg_activity_radius"']' info:)
+            echo "circle $x,$y $x,$y2"
+            done)
+    convert -size ${actwidth}x$_arg_size -gravity Center xc:None \
+    -strokewidth 3.5 -draw "fill none stroke darkgrey line $points " \
+    -strokewidth 0 -draw "fill red stroke red $circles " \
+    -strokewidth 1 -draw "fill none stroke black line $errtop " \
+    -strokewidth 1 -draw "fill none stroke black line $errbottom " \
+    -strokewidth 1 -draw "fill none stroke black line $errline " \
+    $1-$actpHValue-act.png
+}
+
+actSep () {
+pHrange=$(while IFS= read -r line; do echo $line | cut -d " " -f 1; done < $_arg_activity_file)
+
+while IFS= read -r line; do
+    columns=$(echo $line | wc -w)
+    activitydata=$(echo $columns-1 | bc -l)
+    if [ "$_arg_activity_dataformat" = "xydy" ];then
+        sets=$activitydata
+        for ((i=2;i<=sets;i+=2));do
+            act=$i
+            err=$(echo $i+1 | bc -l)
+            labelinter=$(echo $i-2 | bc -l)
+            label=$(echo $labelinter/2 | bc)
+            actpHValue=$(echo $line | cut -d " " -f 1)
+            actValue=$(echo $line | cut -d " " -f $act)
+            actErrValue=$(echo $line | cut -d " " -f $err)
+            name=$(echo ${_arg_pdb[$label]} | cut -d "." -f 1)
+            actGraph $name
+        done
+    elif [ "$_arg_activity_dataformat" = "xy" ];then
+        sets=$columns
+        for ((i=2;i<=sets;i++));do
+            act=$i
+            label=$(echo $i-2 | bc -l)
+            actpHValue=$(echo $line | cut -d " " -f 1)
+            actValue=$(echo $line | cut -d " " -f $act)
+            name=$(echo ${_arg_pdb[$label]} | cut -d "." -f 1)
+            actGraph $name
+        done
+    else
+        echo "activity file format is wrong - please use a tab seperated format."
+        exit
+    fi
+done < $_arg_activity_file
+}
 numGen () {
 for i in $pHrange; do
-    convert -size ${_arg_size}x$fontHigh -gravity $_arg_xalign -background  $backGround -weight $_arg_weight -stretch $_arg_stretch -style $_arg_style -pointsize $_arg_fontsize -family $_arg_font label:$i $WPATH/$i-number.png
+    convert -size ${numwidth}x$fontHigh -gravity $_arg_xalign -background  $backGround -weight $_arg_weight -stretch $_arg_stretch -style $_arg_style -pointsize $_arg_fontsize -family $_arg_font label:$i $WPATH/$i-number.png
 done
 }
 
@@ -544,44 +844,35 @@ for i in ${_arg_pdb[*]}; do
 done
 }
 
-emptyGen () {
-    convert -size ${_arg_size}x$fontHigh xc:$backGround .empty.png
-    convert -size ${_arg_size}x$_arg_axisline_strokewidth xc:$backGround .emptyyadd.png
-    convert -size ${_arg_axisline_strokewidth}x$fontHigh xc:$backGround .emptyxadd.png
-    convert -size ${_arg_axisline_strokewidth}x${_arg_axisline_strokewidth} xc:$backGround .emptysquare.png
-}
 rampGen () {
     convert rawRamp.png -gravity South -crop ${_arg_size}x${rampHigh}+0+$offset -gravity Center -resize ${_arg_size}x$rampHigh -background $backGround -compose Copy -extent ${_arg_size}x$rampHigh .rampInter.png
     convert .rampInter.png -gravity Center -resize ${_arg_size}x$fontHigh -background None -compose Copy -extent ${_arg_size}x$fontHigh ramp.png
-    }
-axisGen () {
-    if [ $_arg_axisline = "off" ]; then
-        _arg_axisline_color=$backGround
-    fi
-    strokeWidth=$(echo $_arg_axisline_strokewidth*2 | bc -l) #to fill the recbox with linecolor
-    cutoffBegin=$(echo $_arg_axislineoffset/100 | bc -l)
-    cutoffEnd=$(echo 1-$cutoffBegin | bc -l)
-    percentOffBegin=$(echo $_arg_size*$cutoffBegin | bc -l)
-    percentOffEnd=$(echo $_arg_size*$cutoffEnd | bc -l)
-    #xaxis
-    convert -size ${_arg_size}x$_arg_axisline_strokewidth xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,0 $_arg_size,0" .xaxis.png
-    convert -size ${_arg_size}x$_arg_axisline_strokewidth xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line $percentOffBegin,0 $_arg_size,0" .xaxisBegin.png
-    convert -size ${_arg_size}x$_arg_axisline_strokewidth xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,0 $percentOffEnd,0" .xaxisEnd.png
-    convert -size ${_arg_size}x$_arg_axisline_strokewidth xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line $percentOffBegin,0 $percentOffEnd,0" .xaxisBeginEnd.png
-    #yaxis
-    convert -size ${_arg_axisline_strokewidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,0 0,$_arg_size" .yaxis.png
-    convert -size ${_arg_axisline_strokewidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,$percentOffBegin 0,$_arg_size" .yaxisBegin.png
-    convert -size ${_arg_axisline_strokewidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,0 0,$percentOffEnd" .yaxisEnd.png
-    convert -size ${_arg_axisline_strokewidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line 0,$percentOffBegin 0,$percentOffEnd" .yaxisBeginEnd.png
 }
-
+emptyGen () {
+    convert -size ${_arg_size}x$fontHigh xc:$backGround .empty.png
+    convert -size ${_arg_size}x$gridwidth xc:$backGround .emptyyadd.png
+    convert -size ${gridwidth}x$fontHigh xc:$backGround .emptyxadd.png
+    convert -size ${gridwidth}x${gridwidth} xc:$backGround .emptysquare.png
+}
 picCombine () {
 printf "\n|%-60s|\n" "Generating final figure and cleaning up"
+# (1) combining surfacemap pictures for each pdb file e.g. protein-pH_profile_pic.png
+for l in ${_arg_pdb[*]}; do
+    label=$(echo $l | cut -d "." -f 1)
+    listlabel=($(ls -tr $WPATH/$label-*-pic.png))
+    listact=($(ls -tr $WPATH/*-*-act.png))
+    labelCount=$(echo ${listlabel[*]} | wc -w) #counts how many pH's
+    for ((v=0;v<labelCount;v++)); do
+        convert +append ${listlabel[$v]} ${listact[$v]} $label-$v-picact.png
+    done
+    list=$(ls -tr $WPATH/$label-*-picact.png)
+    convert +append $list $label-pH_profile_pic.png
+done
 # (2) combining xaxisLine
 listCount=$(ls -tr $WPATH/*-number.png | wc -l)
 listCountMid=$(echo ${listCount}-2 | bc -l)
 for ((i=1;i<=listCountMid;i++));do cp .xaxis.png .xaxis_$i.png; done
-axisList=$(ls -tr .xaxis_*.png)
+axisList=$(ls -tr .xaxis_*.png 2> /dev/null)
 ## (2.1) depending on pH range make xaxisline
 if (( "$listCount" >= "3" ));then
     convert +append .xaxisBegin.png $axisList .xaxisEnd.png xaxisLine.png
@@ -608,9 +899,15 @@ fi
 listCount=$(ls -tr $WPATH/*-label.png | wc -l)
 listCountMid=$(echo ${listCount}-2 | bc -l)
 for ((i=1;i<=listCountMid;i++));do cp .yaxis.png .yaxis_$i.png; done
-axisList=$(ls -tr .yaxis_*.png)
+axisList=$(ls -tr .yaxis_*.png 2> /dev/null)
 ## (6.1) depending on label make yaxisline
-if (( "$listCount" >= "3" ));then
+if [ $_arg_activity = "on" ]; then #activity plot axis with gridlines and offset
+    listCount=$(ls -tr .yaxisBeginEnd_grid.png | wc -l)
+    listCountMid=$(echo ${listCount} | bc -l)
+    for ((i=1;i<=listCountMid;i++));do cp .yaxisBeginEnd_grid.png .yaxisBeginEnd_grid_$i.png; done
+    axisList=$(ls -tr .yaxisBeginEnd_grid_*.png 2> /dev/null)
+    convert -append $axisList .yaxisLine.png
+elif (( "$listCount" >= "3" ));then
     convert -append .yaxisBegin.png $axisList .yaxisEnd.png .yaxisLine.png
 elif [ "$listCount" = "2" ];then
     convert -append .yaxisBegin.png .yaxisEnd.png .yaxisLine.png
@@ -631,11 +928,11 @@ mkdir pngFiles >/dev/null 2>/dev/null
 
 mv *.log logFiles >/dev/null 2>/dev/null
 mv *p2p* p2pFiles >/dev/null 2>/dev/null
-mv *-pic.png pngFiles >/dev/null 2>/dev/null
-mv *-number.png pngFiles >/dev/null 2>/dev/null
-mv *-label.png pngFiles >/dev/null 2>/dev/null
+#mv *-pic.png pngFiles >/dev/null 2>/dev/null
+#mv *-number.png pngFiles >/dev/null 2>/dev/null
+#mv *-label.png pngFiles >/dev/null 2>/dev/null
 
-rm io.mc .rampInter.png .*.png >/dev/null 2>/dev/null
+#rm io.mc .rampInter.png .*.png >/dev/null 2>/dev/null
 }
 
 ## SCRIPT
@@ -645,26 +942,30 @@ printf "\n|%-30s%30s|\n\n" "pHmap started @" "$date"
 
 if [ $_arg_axis_update = "on" ]; then
     # only run convert
-    WPATH=$(echo $WPATH/pngFiles)
-    rm $WPATH/*-number.png >/dev/null 2>/dev/null
-    rm $WPATH/*-label.png >/dev/null 2>/dev/null
+    #WPATH=$(echo $WPATH/pngFiles)
+    #rm $WPATH/*-number.png >/dev/null 2>/dev/null
+    #rm $WPATH/*-label.png >/dev/null 2>/dev/null
+    axisGen
+    actSep
+    picreGen
     numGen
     labelGen
     emptyGen
     rampGen
-    axisGen
     picCombine
 else
+    axisGen
+    actSep
     picGen
     numGen
     labelGen
     emptyGen
     rampGen
-    axisGen
     picCombine
 fi
 cleanUp
 timeNeed
 }
-check
+runScript #2>/dev/null ##disable if check is active
+#check
 # ] <-- needed because of Argbash
