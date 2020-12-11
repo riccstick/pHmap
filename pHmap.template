@@ -64,17 +64,22 @@ if [[ -z "$_arg_set_view" ]]; then
 else
     view=$(cat $_arg_set_view)
 fi
-#### range
-rangeMin=$(echo ${_arg_ph_range} | cut -d " " -f 1)
-rangeMax=$(echo ${_arg_ph_range} | cut -d " " -f 2)
-rangeInc=$(echo ${_arg_ph_range} | cut -d " " -f 3)
-pHmin=$($LCNum printf "%.${_arg_digits}f" $rangeMin) # pH values
-pHinc=$(printf "%.${_arg_digits}f" $rangeInc) # increment for range with digits to choose
-pHmax=$(printf "%.${_arg_digits}f" $rangeMax) # pH values
 
-for i in `seq $pHmin $pHinc $pHmax`; do 
-    pHrange=$(printf "%.${_arg_digits}f\n" $pHrange $i)
-done >/dev/null 2>/dev/null
+
+if [ $_arg_activity = "off" ]; then
+    #### range
+    rangeMin=$(echo ${_arg_ph_range} | cut -d " " -f 1)
+    rangeMax=$(echo ${_arg_ph_range} | cut -d " " -f 2)
+    rangeInc=$(echo ${_arg_ph_range} | cut -d " " -f 3)
+    pHmin=$($LCNum printf "%.${_arg_digits}f" $rangeMin) # pH values
+    pHinc=$(printf "%.${_arg_digits}f" $rangeInc) # increment for range with digits to choose
+    pHmax=$(printf "%.${_arg_digits}f" $rangeMax) # pH values
+
+    for i in `seq $pHmin $pHinc $pHmax`; do 
+        pHrange=$(printf "%.${_arg_digits}f\n" $pHrange $i)
+    done >/dev/null 2>/dev/null
+fi
+
 #### pymol settings
 if [ $_arg_surface_above = "off" ]; then
     above_mode=" "
@@ -341,7 +346,6 @@ actGraph () {
 
 actSep () {
 pHrange=$(while IFS= read -r line; do echo $line | cut -d " " -f 1; done < $_arg_activity_file)
-
 while IFS= read -r line; do 
     columns=$(echo $line | wc -w)
     activitydata=$(echo $columns-1 | bc -l)
@@ -445,9 +449,8 @@ for ((i=1;i<=listCountMid;i++));do cp .yaxis.png .yaxis_$i.png; done
 axisList=$(ls -tr .yaxis_*.png 2> /dev/null)
 ## (6.1) depending on label make yaxisline
 if [ $_arg_activity = "on" ]; then #activity plot axis with gridlines and offset
-    listCount=$(ls -tr .yaxisBeginEnd_grid.png | wc -l)
-    listCountMid=$(echo ${listCount} | bc -l)
-    for ((i=1;i<=listCountMid;i++));do cp .yaxisBeginEnd_grid.png .yaxisBeginEnd_grid_$i.png; done
+    listCount=$(ls -tr *-label.png | wc -l)
+    for ((i=1;i<=listCount;i++));do cp .yaxisBeginEnd_grid.png .yaxisBeginEnd_grid_$i.png; done
     axisList=$(ls -tr .yaxisBeginEnd_grid_*.png 2> /dev/null)
     convert -append $axisList .yaxisLine.png
 elif (( "$listCount" >= "3" ));then
