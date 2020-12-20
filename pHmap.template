@@ -195,7 +195,9 @@ axisGen () {
     fi
     strokeWidth=$(echo $_arg_axisline_strokewidth*1 | bc -l) 
     strokeWidthhalf=$(echo $_arg_axisline_strokewidth/2 | bc -l)
-    gridwidth=$(echo $_arg_axisline_strokewidth*$_arg_grid_fontsize+$_arg_gridlinewidth | bc -l)
+    
+    gridwidth=$(echo $_arg_axisline_strokewidth*$_arg_grid_fontsize+$_arg_gridlinewidth | bc -l) #### add scale factor for size 500 to 1000 to make new width if size is adjusted to 1000 e.g.
+    
     gridmiddle=$(echo $gridwidth/2 | bc -l)
     cutoffBegin=$(echo $_arg_axislineoffset/100 | bc -l)
     cutoffEnd=$(echo 1-$cutoffBegin | bc -l)
@@ -299,6 +301,7 @@ actGraph () {
 ####DONE                4.add actpics to final picture
 ##TODO                  5.enable/disalbe actpics in final
 ##TODO                  6.check the check function
+##TODO                  7.act lollipop does not scale in width; gridwidth variable
 
     #var for xaxis and lollipop!!!
     window=$(echo $_arg_axislineoffset/100 | bc -l)
@@ -407,7 +410,7 @@ printf "\n|%-60s|\n" "Generating final figure and cleaning up"
 for l in ${_arg_pdb[*]}; do
     label=$(echo $l | cut -d "." -f 1)
     listlabel=($(ls -tr $WPATH/$label-*-pic.png))
-    listact=($(ls -tr $WPATH/*-*-act.png))
+    listact=($(ls -tr $WPATH/$label-*-act.png))
     labelCount=$(echo ${listlabel[*]} | wc -w) #counts how many pH's
     for ((v=0;v<labelCount;v++)); do
         convert +append ${listlabel[$v]} ${listact[$v]} $label-$v-picact.png 
@@ -432,6 +435,9 @@ fi
 list=$(ls -tr $WPATH/*-number.png)
 convert +append $list xaxis_number.png
 # (4) combining (1) (2) and (3)
+
+##### Add xaxisLine.png again for each phprofile. Either with array or before combine surface pic and axisline. Has to work with enabled and disables activity!
+
 list=$(ls -tr *-pH_profile_pic.png)
 convert -append $list xaxisLine.png xaxis_number.png .pH_profile_pic.png 
 # (5) combining labels of pdb files
