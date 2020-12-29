@@ -11,6 +11,7 @@
 # ARG_OPTIONAL_SINGLE([rampcolors], ,[colors for ramp; 3 colors comma seperated\n], [red, white, blue])
 # ARG_OPTIONAL_BOOLEAN([surface_above], ,[surface_ramp_above_mode from PyMol\n], [on])
 
+# ARG_OPTIONAL_BOOLEAN([rendering_update], ,[renders the picture and updates the axis labels\n])
 # ARG_OPTIONAL_BOOLEAN([axis_update], ,[updates only the axis labels\n])
 # ARG_OPTIONAL_SINGLE([digits], ,[digits of pH values in axis; if pH values like 5.25 change to 2!\n], [1])
 # ARG_OPTIONAL_SINGLE([font], ,[font of the axis; type <convert -list font>\nto get a full list of fonts available\n], [Helvetica])
@@ -40,7 +41,7 @@
 # ARG_OPTIONAL_SINGLE([background], ,[background color: None, colors e.g. white, black])
 
 # ARG_HELP([+-------+\n| pHmap |\n+-------+\nby Erik Breslmayr, 2020\n \npHmap uses pdb2pqr, apbs to calcualte electrostatic surface potentials,\nwhich are visualized by generating 2D pictures with PyMol. Several pH's\nand pdb files can be processed and will be combined into one figure. On\nthe x-axis the pH's and on the y-axis the filenames will be added.\n \nExamples:\npHmap protein.pdb mutant.pdb -r '4 7 0.5' -l ligand.mol2 -s set_view.txt\npHmap protein.pdb mutant.pdb -r '4 7 0.5' -l ligand.mol2 -s set_view.txt --axis_update --font Helvetica --fontsize 60\npHmap protein.pdb mutant.pdb -r '4 7 0.25' -l ligand.mol2 -s set_view.txt --digits 2\n])
-# ARG_VERSION([echo $0 v0.4])
+# ARG_VERSION([echo $0 v0.5])
 # ARG_OPTIONAL_REPEATED([include],[I],[Directory for temporary folder],['/tmp'])
 # ARGBASH_GO
 
@@ -195,8 +196,7 @@ axisGen () {
     fi
     strokeWidth=$(echo $_arg_axisline_strokewidth*1 | bc -l) 
     strokeWidthhalf=$(echo $_arg_axisline_strokewidth/2 | bc -l)
-    
-    gridwidth=$(echo $_arg_axisline_strokewidth*$_arg_grid_fontsize+$_arg_gridlinewidth | bc -l) #### add scale factor for size 500 to 1000 to make new width if size is adjusted to 1000 e.g.
+    gridwidth=$(echo $_arg_axisline_strokewidth*$_arg_grid_fontsize+$_arg_gridlinewidth | bc -l) 
     
     gridmiddle=$(echo $gridwidth/2 | bc -l)
     cutoffBegin=$(echo $_arg_axislineoffset/100 | bc -l)
@@ -222,6 +222,8 @@ axisGen () {
     # actwidth same as in actGraph function !!!
     actwidth=$(echo $_arg_activity_radius*2.25 | bc -l)
     numwidth=$(echo ${_arg_size} + $actwidth | bc -l)
+    strokewidthLollipopFactor=$(echo $_arg_size/500 | bc -l)
+    strokewidthLollipopLine=$(echo $strokewidthLollipopFactor*3.5 | bc -l) #line grey
 
     #xaxis no activity
     xaxisnoAct () {
@@ -240,20 +242,20 @@ axisGen () {
     pointsconnect="$pointsconnectposition,$gridmiddle $pointsconnectposition,0"
  
     convert -size ${numwidth}x${gridwidth} xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None \
-    -strokewidth 3.5 -draw "fill none stroke darkgrey line $pointsconnect " \
+    -strokewidth $strokewidthLollipopLine -draw "fill none stroke darkgrey line $pointsconnect " \
     -draw "line 0,$gridmiddle $numwidth,$gridmiddle" \
     -draw "line $xaxismiddle,$gridlinewidthx $xaxismiddle,$gridmiddle" \
     .xaxis.png
 
     convert -size ${numwidth}x${gridwidth} xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None \
-    -strokewidth 3.5 -draw "fill none stroke darkgrey line $pointsconnect " \
+    -strokewidth $strokewidthLollipopLine -draw "fill none stroke darkgrey line $pointsconnect " \
     -draw "line $percentOffBegin,$gridmiddle $numwidth,$gridmiddle" \
     -draw "line $xaxismiddle,$gridlinewidthx $xaxismiddle,$gridmiddle" \
     -pointsize $_arg_grid_fontsize -strokeWidth 0 -fill Black -font $_arg_font -gravity West -draw "text 0,0  'pH'" \
     .xaxisBegin.png
     
     convert -size ${numwidth}x${gridwidth} xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None \
-    -strokewidth 3.5 -draw "fill none stroke darkgrey line $pointsconnect " \
+    -strokewidth $strokewidthLollipopLine -draw "fill none stroke darkgrey line $pointsconnect " \
     -draw "line 0,$gridmiddle $numwidth,$gridmiddle" \
     -draw "line $xaxismiddle,$gridlinewidthx $xaxismiddle,$gridmiddle" \
     .xaxisEnd.png    
@@ -263,6 +265,7 @@ axisGen () {
     -draw "line $xaxismiddle,$gridlinewidthx $xaxismiddle,$gridmiddle" \
     .xaxisBeginEnd.png
     }
+    
     #yaxis
     convert -size ${gridwidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None -draw "line $gridmiddle,0 $gridmiddle,$_arg_size" .yaxis.png
     convert -size ${gridwidth}x$_arg_size xc:$backGround -stroke $_arg_axisline_color -strokewidth $strokeWidth -fill None \
@@ -297,9 +300,9 @@ axisGen () {
 actGraph () { 
 ####DONE                1.add bottom black line to fit xaxisline
 ####DONE                2.change yaxisline to always scale 5% offset
-##TODO                  3.add xaxisline for each pdb file
+####DONE                3.add xaxisline for each pdb file
 ####DONE                4.add actpics to final picture
-##TODO                  5.enable/disalbe actpics in final
+####DONE                5.enable/disalbe actpics in final
 ##TODO                  6.check the check function
 ##TODO                  7.act lollipop does not scale in width; gridwidth variable
 
@@ -316,6 +319,11 @@ actGraph () {
     insert=$(echo $_arg_size*$data | bc -l) 
     errvalue=$(echo $_arg_size*$errdata | bc -l)
 
+    strokewidthLollipopFactor=$(echo $_arg_size/500 | bc -l)
+    strokewidthLollipopLine=$(echo $strokewidthLollipopFactor*3.5 | bc -l) #line grey
+    strokewidthLollipopError=$(echo $strokewidthLollipopFactor*3.5 | bc -l) #errorbars
+    
+    
     #calc
     actwidth=$(echo $_arg_activity_radius*2.25 | bc -l)
     linewidth=$(echo $actwidth/2 | bc -l)
@@ -339,11 +347,11 @@ actGraph () {
             echo "circle $x,$y $x,$y2"
             done)
     convert -size ${actwidth}x$_arg_size -gravity Center xc:None \
-    -strokewidth 3.5 -draw "fill none stroke darkgrey line $points " \
+    -strokewidth $strokewidthLollipopLine -draw "fill none stroke darkgrey line $points " \
     -strokewidth 0 -draw "fill red stroke red $circles " \
-    -strokewidth 1 -draw "fill none stroke black line $errtop " \
-    -strokewidth 1 -draw "fill none stroke black line $errbottom " \
-    -strokewidth 1 -draw "fill none stroke black line $errline " \
+    -strokewidth $strokewidthLollipopError -draw "fill none stroke black line $errtop " \
+    -strokewidth $strokewidthLollipopError -draw "fill none stroke black line $errbottom " \
+    -strokewidth $strokewidthLollipopError -draw "fill none stroke black line $errline " \
     $1-$actpHValue-act.png
 }
 
@@ -407,17 +415,26 @@ emptyGen () {
 picCombine () {
 printf "\n|%-60s|\n" "Generating final figure and cleaning up"
 # (1) combining surfacemap pictures for each pdb file e.g. protein-pH_profile_pic.png
-for l in ${_arg_pdb[*]}; do
-    label=$(echo $l | cut -d "." -f 1)
-    listlabel=($(ls -tr $WPATH/$label-*-pic.png))
-    listact=($(ls -tr $WPATH/$label-*-act.png))
-    labelCount=$(echo ${listlabel[*]} | wc -w) #counts how many pH's
-    for ((v=0;v<labelCount;v++)); do
-        convert +append ${listlabel[$v]} ${listact[$v]} $label-$v-picact.png 
+if [ $_arg_activity = "on" ]; then #activity plot axis with gridlines and offset
+    for l in ${_arg_pdb[*]}; do
+        label=$(echo $l | cut -d "." -f 1)
+        listlabel=($(ls -tr $WPATH/$label-*-pic.png))
+        listact=($(ls -tr $WPATH/$label-*-act.png))
+        labelCount=$(echo ${listlabel[*]} | wc -w) #counts how many pH's
+        for ((v=0;v<labelCount;v++)); do
+            convert +append ${listlabel[$v]} ${listact[$v]} $label-$v-picact.png 
+        done
+        list=$(ls -tr $WPATH/$label-*-picact.png)
+        convert +append $list $label-pH_profile_pic.png
     done
-    list=$(ls -tr $WPATH/$label-*-picact.png)
-    convert +append $list $label-pH_profile_pic.png
-done
+else
+    for l in ${_arg_pdb[*]}; do
+        label=$(echo $l | cut -d "." -f 1)
+        list=$(ls -tr $WPATH/$label-*-pic.png)
+        convert +append $list $label-pH_profile_pic.png
+    done
+fi
+
 # (2) combining xaxisLine
 listCount=$(ls -tr $WPATH/*-number.png | wc -l)
 listCountMid=$(echo ${listCount}-2 | bc -l)
@@ -435,18 +452,39 @@ fi
 list=$(ls -tr $WPATH/*-number.png)
 convert +append $list xaxis_number.png
 # (4) combining (1) (2) and (3)
-
-##### Add xaxisLine.png again for each phprofile. Either with array or before combine surface pic and axisline. Has to work with enabled and disables activity!
-
-list=$(ls -tr *-pH_profile_pic.png)
-convert -append $list xaxisLine.png xaxis_number.png .pH_profile_pic.png 
-# (5) combining labels of pdb files
-list=$(ls -tr $WPATH/*-label.png)
-if [ $_arg_ramp = "on" ]; then
-    convert -append $list .emptyyadd.png ramp.png yaxis_label.png
-
+if [ $_arg_activity = "on" ]; then #activity plot axis with gridlines and offset
+    list=$(ls -tr *-pH_profile_pic.png)
+    for i in $list;do
+        listname=$(echo $i | cut -d "-" -f 1)
+        convert -append $i xaxisLine.png $listname-pH_profile_xaxisline.png 
+    done
+    list=$(ls -tr *-pH_profile_xaxisline.png)
+    convert -append $list xaxis_number.png .pH_profile_pic.png 
 else
-    convert -append $list .emptyyadd.png .empty.png yaxis_label.png
+    list=$(ls -tr *-pH_profile_pic.png)
+    convert -append $list xaxisLine.png xaxis_number.png .pH_profile_pic.png 
+fi
+
+# (5) combining labels of pdb files
+if [ $_arg_activity = "on" ]; then #activity plot axis with gridlines and offset
+    list=$(ls -tr $WPATH/*-label.png)
+    for i in $list;do
+        listname=$(echo $i | cut -d "-" -f 1)
+        convert -append $i .emptyyadd.png $listname-label-emptyadd.png 
+    done
+    list=$(ls -tr $WPATH/*-label-emptyadd.png)
+    if [ $_arg_ramp = "on" ]; then
+        convert -append $list ramp.png yaxis_label.png
+    else
+        convert -append $list .empty.png yaxis_label.png
+    fi
+else
+    list=$(ls -tr $WPATH/*-label.png)
+    if [ $_arg_ramp = "on" ]; then
+        convert -append $list .emptyyadd.png ramp.png yaxis_label.png
+    else
+        convert -append $list .emptyyadd.png .empty.png yaxis_label.png
+    fi
 fi
 # (6) combining yaxisLine
 listCount=$(ls -tr $WPATH/*-label.png | wc -l)
@@ -456,7 +494,9 @@ axisList=$(ls -tr .yaxis_*.png 2> /dev/null)
 ## (6.1) depending on label make yaxisline
 if [ $_arg_activity = "on" ]; then #activity plot axis with gridlines and offset
     listCount=$(ls -tr *-label.png | wc -l)
-    for ((i=1;i<=listCount;i++));do cp .yaxisBeginEnd_grid.png .yaxisBeginEnd_grid_$i.png; done
+    for ((i=1;i<=listCount;i++));do 
+        convert -append .yaxisBeginEnd_grid.png .emptysquare.png .yaxisBeginEnd_grid_$i.png
+    done
     axisList=$(ls -tr .yaxisBeginEnd_grid_*.png 2> /dev/null)
     convert -append $axisList .yaxisLine.png
 elif (( "$listCount" >= "3" ));then
@@ -467,7 +507,12 @@ else
     convert -append .yaxisBeginEnd.png .yaxisLine.png
 fi
 # (7) combining yaxisline and emptysquare and emptyxadd
-convert -append .yaxisLine.png .emptysquare.png .emptyxadd.png yaxisLine.png
+if [ $_arg_activity = "on" ]; then #activity plot axis with gridlines and offset
+    convert -append .yaxisLine.png .emptyxadd.png yaxisLine.png
+else
+    convert -append .yaxisLine.png .emptysquare.png .emptyxadd.png yaxisLine.png
+fi
+
 # (9) combining (5) (8) and (4)
 convert +append yaxis_label.png yaxisLine.png .pH_profile_pic.png pH_profile+label.png
 }
@@ -480,11 +525,12 @@ mkdir pngFiles >/dev/null 2>/dev/null
 
 mv *.log logFiles >/dev/null 2>/dev/null
 mv *p2p* p2pFiles >/dev/null 2>/dev/null
-#mv *-pic.png pngFiles >/dev/null 2>/dev/null
-#mv *-number.png pngFiles >/dev/null 2>/dev/null
-#mv *-label.png pngFiles >/dev/null 2>/dev/null
-
-#rm io.mc .rampInter.png .*.png >/dev/null 2>/dev/null
+mv rawRamp.png pngFiles >/dev/null 2>/dev/null
+mv *.*-pic.png pngFiles >/dev/null 2>/dev/null
+mv pH_profile+label.png pngFiles
+rm io.mc *.png .*.png >/dev/null 2>/dev/null
+mv pngFiles/* . >/dev/null 2>/dev/null
+rm -r pngFiles >/dev/null 2>/dev/null
 }
 
 ## SCRIPT 
@@ -493,14 +539,18 @@ date=$(date)
 printf "\n|%-30s%30s|\n\n" "pHmap started @" "$date"
 
 if [ $_arg_axis_update = "on" ]; then
-    # only run convert
-    #WPATH=$(echo $WPATH/pngFiles)
-    #rm $WPATH/*-number.png >/dev/null 2>/dev/null
-    #rm $WPATH/*-label.png >/dev/null 2>/dev/null
     axisGen
     actSep
-    picreGen
     numGen
+    labelGen
+    emptyGen
+    rampGen
+    picCombine
+elif [ $_arg_rendering_update = "on" ]; then
+    axisGen
+    actSep
+    numGen
+    picreGen
     labelGen
     emptyGen
     rampGen
