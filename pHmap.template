@@ -596,6 +596,5 @@ fi
 cleanUp
 timeNeed
 }
-#runScript #2>/dev/null ##disable if check is active
 check
 # ] <-- needed because of Argbash
