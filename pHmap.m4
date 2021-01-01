@@ -11,10 +11,10 @@ _pHmap ()
 	COMPREPLY=()
 	cur="${COMP_WORDS[COMP_CWORD]}"
 	prev="${COMP_WORDS[COMP_CWORD-1]}"
-	all_long_opts="--ph_range --ligand --set_view --level --rampcolors --surface_above --rendering_update --axis_update --digits --font --fontsize --weight --stretch --style --ramp --xalign --yalign --axisline --axisline_strokewidth --axisline_color --axislineoffset --activity --activity_file --activity_dataformat --activity_radius --gridlinewidth --gridplace --grid_fontsize --size --background --help --version --include "
-	all_short_opts="-r -l -s -a -h -v -I "
+	all_long_opts="--ph_range --activity --ligand --set_view --digits --activityplot --activity_dataformat --activity_radius --activity_lollipop_circle_color --activity_lollipop_circle_stroke --activity_lollipopbar_color --activity_lollipop_errorbar_color --update_rendering --pymol_surface_above_mode --pymol_ramp --pymol_level --pymol_ramp_colors --update_axis --axisline --axis_font --axis_font_size --axis_font_weight --axis_font_stretch --axis_font_style --xalign --yalign --axisline_strokewidth --axisline_color --axislineoffset --grid_linewidth --grid_place --grid_font_size --size --background --help --version --include "
+	all_short_opts="-r -a -l -s -h -v -I "
 	case "$prev" in
-		--ph_range|-r|--ligand|-l|--set_view|-s|--level|--rampcolors|--digits|--font|--fontsize|--weight|--stretch|--style|--xalign|--yalign|--axisline_strokewidth|--axisline_color|--axislineoffset|--activity_file|-a|--activity_dataformat|--activity_radius|--gridlinewidth|--gridplace|--grid_fontsize|--size|--background|--include|-I)
+		--ph_range|-r|--activity|-a|--ligand|-l|--set_view|-s|--digits|--activity_dataformat|--activity_radius|--activity_lollipop_circle_color|--activity_lollipop_circle_stroke|--activity_lollipopbar_color|--activity_lollipop_errorbar_color|--pymol_level|--pymol_ramp_colors|--axis_font|--axis_font_size|--axis_font_weight|--axis_font_stretch|--axis_font_style|--xalign|--yalign|--axisline_strokewidth|--axisline_color|--axislineoffset|--grid_linewidth|--grid_place|--grid_font_size|--size|--background|--include|-I)
 			COMPREPLY=( $(compgen -o bashdefault -o default -- "${cur}") )
 			return 0
 			;;

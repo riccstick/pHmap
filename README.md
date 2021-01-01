@@ -1,9 +1,14 @@
 # pHmap
 Software for generating a surface charge based pH-profile map.
 
-<img src="./pH_profile+label.png" alt="pH_profile" style="zoom:50%;" />
+<img src="./pHmap_label.png" alt="pH_profile" style="zoom:50%;" />
+
+Optionally activity data can be visualised as lollipop bars.
+
+<img src="./pHmap_label_activity.png" alt="pH_profile" style="zoom:50%;" />
 
 ## Requirements
+
 - [PDB2PQR](http://www.poissonboltzmann.org/) - for calculation of protonation states
 - [ABPS](http://www.poissonboltzmann.org/) - for calculation of electrostatic surface
 - [PyMol](https://github.com/schrodinger/pymol-open-source) - for generating surface visualization and .pngs
