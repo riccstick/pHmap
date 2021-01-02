@@ -11,10 +11,10 @@ _pHmap ()
 	COMPREPLY=()
 	cur="${COMP_WORDS[COMP_CWORD]}"
 	prev="${COMP_WORDS[COMP_CWORD-1]}"
-	all_long_opts="--ph_range --activity --ligand --set_view --digits --activityplot --activity_dataformat --activity_radius --activity_lollipop_circle_color --activity_lollipop_circle_stroke --activity_lollipopbar_color --activity_lollipop_errorbar_color --update_rendering --pymol_surface_above_mode --pymol_ramp --pymol_level --pymol_ramp_colors --update_axis --axisline --axis_font --axis_font_size --axis_font_weight --axis_font_stretch --axis_font_style --xalign --yalign --axisline_strokewidth --axisline_color --axislineoffset --grid_linewidth --grid_place --grid_font_size --size --background --help --version --include "
-	all_short_opts="-r -a -l -s -h -v -I "
+	all_long_opts="--ph_range --activity --ligand --set_view --digits --size --background --activityplot --activity_dataformat --activity_radius --activity_lollipop_circle_color --activity_lollipop_circle_stroke --activity_lollipopbar_color --activity_lollipop_errorbar_color --grid_linewidth --grid_place --grid_font_size --update_rendering --pymol_surface_mode --pymol_surface_solvent --pymol_surface_above_mode --pymol_ligand_representation --pymol_ramp --pymol_level --pymol_ramp_colors --update_axis --axis_font --axis_font_size --axis_font_weight --axis_font_stretch --axis_font_style --xalign --yalign --axisline --axisline_strokewidth --axisline_color --axisline_offset --help --version "
+	all_short_opts="-r -a -l -s -h -v "
 	case "$prev" in
-		--ph_range|-r|--activity|-a|--ligand|-l|--set_view|-s|--digits|--activity_dataformat|--activity_radius|--activity_lollipop_circle_color|--activity_lollipop_circle_stroke|--activity_lollipopbar_color|--activity_lollipop_errorbar_color|--pymol_level|--pymol_ramp_colors|--axis_font|--axis_font_size|--axis_font_weight|--axis_font_stretch|--axis_font_style|--xalign|--yalign|--axisline_strokewidth|--axisline_color|--axislineoffset|--grid_linewidth|--grid_place|--grid_font_size|--size|--background|--include|-I)
+		--ph_range|-r|--activity|-a|--ligand|-l|--set_view|-s|--digits|--size|--background|--activity_dataformat|--activity_radius|--activity_lollipop_circle_color|--activity_lollipop_circle_stroke|--activity_lollipopbar_color|--activity_lollipop_errorbar_color|--grid_linewidth|--grid_place|--grid_font_size|--pymol_surface_mode|--pymol_ligand_representation|--pymol_level|--pymol_ramp_colors|--axis_font|--axis_font_size|--axis_font_weight|--axis_font_stretch|--axis_font_style|--xalign|--yalign|--axisline_strokewidth|--axisline_color|--axisline_offset)
 			COMPREPLY=( $(compgen -o bashdefault -o default -- "${cur}") )
 			return 0
 			;;
