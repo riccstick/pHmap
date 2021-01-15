@@ -960,6 +960,9 @@ if [[ -e "$_arg_activity" ]];then
 fi
 }
 numGen () {
+if [ "$_arg_activityplot" = "off" ];then
+    numwidth="$_arg_size"
+fi
 for i in $pHrange; do
     convert -size ${numwidth}x$fontHigh -gravity $_arg_xalign -background  $backGround -weight $_arg_axis_font_weight -stretch $_arg_axis_font_stretch -style $_arg_axis_font_style -pointsize $_arg_axis_font_size  -family $_arg_axis_font label:$i $WPATH/$i-number.png
 done
