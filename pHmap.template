@@ -49,7 +49,7 @@
 # ARG_OPTIONAL_SINGLE([axisline_offset], ,[offset in % of y and x axisline], [7])
 
 # ARG_HELP([+-------+\n| pHmap |\n+-------+\nby Erik Breslmayr, 2020\n \npHmap uses pdb2pqr, apbs to calcualte electrostatic surface potentials, which are visualized by generating 2D pictures with PyMol. Additionally residual activity data in % can be provided to compare surface charges and real activity. Therefore, several pH's, pdb files and activity data can be processed and will be combined into one figure. On the x-axis the pH's and on the y-axis the filenames and optionally the activity in % will be added.\n \nExamples:\npHmap protein.pdb mutant.pdb -r '4 7 0.5' -l ligand.mol2 -s set_view.txt\npHmap protein.pdb mutant.pdb -r '4 7 0.5' -l ligand.mol2 -s set_view.txt --axis_update --axis_font Helvetica --fontsize 60\npHmap protein.pdb mutant.pdb -r '4 7 0.25' -l ligand.mol2 -s set_view.txt --digits 2\npHmap protein.pdb mutant.pdb -r '4 7 0.25' -l ligand.mol2 -s set_view.txt --rendering_update --background black\npHmap protein.pdb mutant.pdb -a activityFile.txt -l ligand.mol2 -s set_view.txt\npHmap protein.pdb mutant.pdb -a activityFile.txt -l ligand.mol2 -s set_view.txt --size 1000 --activity_dataformat xy\npHmap protein.pdb mutant1.pdb -a activityFile.txt -l ligand.mol2 -s set_view.txt --size 1000 --axis_update --activity_radius 25 --fontsize 60 --gridlinewidth 20 --grid_fontsize 40\n])
-# ARG_VERSION([echo $0 v1.0])
+# ARG_VERSION([echo $0 v1.1])
 # ARGBASH_GO
 
 # [ <-- needed because of Argbash
@@ -68,6 +68,11 @@ subCommand="`basename $0` $@"
 echo $subCommand > $WPATH/submitted_command_$time.sh
 
 ### arguments var
+#### phrange no act file
+if [[ -z "$_arg_activity" ]]; then
+    _arg_activityplot="off"
+fi
+
 #### ligandFlag
 if [[ -n "$_arg_ligand" ]]; then
     ligandFlag=$(echo --ligand=$_arg_ligand)
@@ -148,12 +153,26 @@ check () {
 printf "\n|%-30s%30s|\n\n" "pHmap started @" "$date"
 #checks if pdb file is given
 if [[ -e "$_arg_activity" ]] && [ $_arg_activityplot = "on" ]; then
-    printf "|%-30s%30s|\n" "Activity based on pH's from:" "$_arg_activity"
-    runScript
+    if [[ -n "$_arg_ph_range" ]]; then
+        printf "\n|%-60s|" "              ERROR: -r, --ph_range argument and"
+        printf "\n|%-60s|\n" "                      activity file given!"
+        printf "|%-60s|\n\n" "                        pHmap -h for help!"
+        exit
+    else
+        printf "|%-30s%30s|\n" "Activity based on pH's from:" "$_arg_activity"
+        runScript
+    fi
 elif [[ -e "$_arg_activity" ]] && [ $_arg_activityplot = "off" ]; then
-    printf "|%-30s%30s|\n" "Using pH's from:" "$_arg_activity"
-    runScript
-elif [[ -z "$_arg_activity" ]] && [ $_arg_activityplot = "on" ]; then
+    if [[ -n "$_arg_ph_range" ]]; then
+        printf "\n|%-60s|" "              ERROR: -r, --ph_range argument and"
+        printf "\n|%-60s|\n" "                      activity file given!"
+        printf "|%-60s|\n\n" "                        pHmap -h for help!"
+        exit
+    else
+        printf "|%-30s%30s|\n" "Using pH's from:" "$_arg_activity"
+        runScript
+    fi
+elif [[ -z "$_arg_activity" ]] && [ $_arg_activityplot = "off" ]; then
     if [[ -z "$_arg_ph_range" ]]; then
         printf "\n|%-60s|\n" "           ERROR: -r, --ph_range argument not given"
         printf "|%-60s|\n\n" "                        pHmap -h for help!"
@@ -205,7 +224,7 @@ load $WPATH/$label-$i-p2p.pqr
 as surface
 $_arg_pymol_surface_solvent
 $_arg_pymol_ligand_representation
-ramp_new ramp, $WPATH/$label-$i-p2p.pqr, [-$_arg_pymol_level, 0, $_arg_pymol_level], [$_arg_pymol_ramp_colors]
+ramp_new ramp, $label-$i-p2p.pqr, [-$_arg_pymol_level, 0, $_arg_pymol_level], [$_arg_pymol_ramp_colors]
 set surface_color, ramp
 $_arg_pymol_surface_mode
 $_arg_pymol_surface_above_mode
@@ -417,40 +436,45 @@ actGraph () {
 }
 
 actSep () {
-pHrange=$(while IFS= read -r line; do echo $line | cut -d " " -f 1; done < $_arg_activity)
-while IFS= read -r line; do 
-    columns=$(echo $line | wc -w)
-    activitydata=$(echo $columns-1 | bc -l)
-    if [ "$_arg_activity_dataformat" = "xydy" ];then
-        sets=$activitydata
-        for ((i=2;i<=sets;i+=2));do
-            act=$i
-            err=$(echo $i+1 | bc -l)
-            labelinter=$(echo $i-2 | bc -l)
-            label=$(echo $labelinter/2 | bc)
-            actpHValue=$(echo $line | cut -d " " -f 1)
-            actValue=$(echo $line | cut -d " " -f $act)
-            actErrValue=$(echo $line | cut -d " " -f $err)
-            name=$(echo ${_arg_pdb[$label]} | cut -d "." -f 1)
-            actGraph $name
-        done
-    elif [ "$_arg_activity_dataformat" = "xy" ];then
-        sets=$columns
-        for ((i=2;i<=sets;i++));do
-            act=$i
-            label=$(echo $i-2 | bc -l)
-            actpHValue=$(echo $line | cut -d " " -f 1)
-            actValue=$(echo $line | cut -d " " -f $act)
-            name=$(echo ${_arg_pdb[$label]} | cut -d "." -f 1)          
-            actGraph $name
-        done
-    else
-        echo "activity file format is wrong - please use a tab seperated format."
-        exit
-    fi
-done < $_arg_activity
+if [[ -e "$_arg_activity" ]];then
+    pHrange=$(while IFS= read -r line; do echo $line | cut -d " " -f 1; done < $_arg_activity)
+    while IFS= read -r line; do 
+        columns=$(echo $line | wc -w)
+        activitydata=$(echo $columns-1 | bc -l)
+        if [ "$_arg_activity_dataformat" = "xydy" ];then
+            sets=$activitydata
+            for ((i=2;i<=sets;i+=2));do
+                act=$i
+                err=$(echo $i+1 | bc -l)
+                labelinter=$(echo $i-2 | bc -l)
+                label=$(echo $labelinter/2 | bc)
+                actpHValue=$(echo $line | cut -d " " -f 1)
+                actValue=$(echo $line | cut -d " " -f $act)
+                actErrValue=$(echo $line | cut -d " " -f $err)
+                name=$(echo ${_arg_pdb[$label]} | cut -d "." -f 1)
+                actGraph $name
+            done
+        elif [ "$_arg_activity_dataformat" = "xy" ];then
+            sets=$columns
+            for ((i=2;i<=sets;i++));do
+                act=$i
+                label=$(echo $i-2 | bc -l)
+                actpHValue=$(echo $line | cut -d " " -f 1)
+                actValue=$(echo $line | cut -d " " -f $act)
+                name=$(echo ${_arg_pdb[$label]} | cut -d "." -f 1)          
+                actGraph $name
+            done
+        else
+            echo "activity file format is wrong - please use a tab seperated format."
+            exit
+        fi
+    done < $_arg_activity
+fi
 }
 numGen () {
+if [ "$_arg_activityplot" = "off" ];then
+    numwidth="$_arg_size"
+fi
 for i in $pHrange; do
     convert -size ${numwidth}x$fontHigh -gravity $_arg_xalign -background  $backGround -weight $_arg_axis_font_weight -stretch $_arg_axis_font_stretch -style $_arg_axis_font_style -pointsize $_arg_axis_font_size  -family $_arg_axis_font label:$i $WPATH/$i-number.png
 done
