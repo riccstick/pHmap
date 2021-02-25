@@ -65,8 +65,8 @@ activityFileName=$(echo $_arg_activity | rev | cut -d "/" -f 1 | rev)
 ## Subcommand saving
 date=$(date)
 time=$(date +%H-%M-%S)
-subCommand="`basename $0` $@"
-echo $subCommand > $WPATH/submitted_command_$time.sh
+#subCommand="`basename $0` $@"
+#echo $subCommand > $WPATH/submitted_command_$time.sh
 
 ### arguments var
 #### phrange no act file

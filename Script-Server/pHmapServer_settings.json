@@ -33,7 +33,7 @@
     },
     {
       "name": "pH Range: min max steps",
-      "param": "-a",
+      "param": "-r",
       "type": "text",
       "description": "Example: 5 7 0.5"
     },
