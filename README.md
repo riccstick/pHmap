@@ -17,9 +17,9 @@ Optionally activity data can be visualised as lollipop bars.
 
 ## Citation 
 
-`[![DOI](https://zenodo.org/badge/308921470.svg)](https://zenodo.org/badge/latestdoi/308921470)`
+[![DOI](https://zenodo.org/badge/308921470.svg)](https://zenodo.org/badge/latestdoi/308921470)
 
-> Breslmayr, E., pHmap, (2021), GitHub repository, https://github.com/riccstick/pHmap
+> Breslmayr, E., pHmap, (2021), GitHub repository, DOI: 10.5281/zenodo.4751499
 
 ## Installation
 
