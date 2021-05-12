@@ -15,7 +15,9 @@ Optionally activity data can be visualised as lollipop bars.
 - [ImageMagick](https://imagemagick.org/) - for generating final multi .png picture
 - [Argbash](https://argbash.readthedocs.io/en/latest/index.html) (argument parser generator)
 
-## Citation
+## Citation 
+
+`[![DOI](https://zenodo.org/badge/308921470.svg)](https://zenodo.org/badge/latestdoi/308921470)`
 
 > Breslmayr, E., pHmap, (2021), GitHub repository, https://github.com/riccstick/pHmap
 
