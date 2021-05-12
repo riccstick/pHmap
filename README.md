@@ -15,6 +15,10 @@ Optionally activity data can be visualised as lollipop bars.
 - [ImageMagick](https://imagemagick.org/) - for generating final multi .png picture
 - [Argbash](https://argbash.readthedocs.io/en/latest/index.html) (argument parser generator)
 
+Citation
+
+> Breslmayr, E., pHmap, (2021), GitHub repository, https://github.com/riccstick/pHmap
+
 ## Installation
 
 - Tested under Ubuntu_20, Ubuntu_16 and MacOSx_Catalina_10.15.7
