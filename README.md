@@ -19,7 +19,7 @@ Optionally activity data can be visualised as lollipop bars.
 
 [![DOI](https://zenodo.org/badge/308921470.svg)](https://zenodo.org/badge/latestdoi/308921470)
 
-> Breslmayr, E., pHmap, (2021), GitHub repository, DOI: 10.5281/zenodo.4751499
+> Breslmayr, E. (2021). pHmap - A tool for automatized calculation and visualization of protein surface charge pH-profiles (Version v1.2). Zenodo. http://doi.org/10.5281/zenodo.4751499
 
 ## Installation
 
