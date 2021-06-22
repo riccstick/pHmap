@@ -437,6 +437,10 @@ actGraph () {
 }
 
 actSep () {
+# activitydata saved on windows e.g. Excel have a EOF error if read by pHmap (^M at the end for new line)
+sed -e "s/\r//g" $_arg_activity > .activity-unix.files
+_arg_activity=.activity-unix.files
+
 if [[ -e "$_arg_activity" ]];then
     pHrange=$(while IFS= read -r line; do echo $line | cut -d " " -f 1; done < $_arg_activity)
     while IFS= read -r line; do 
@@ -625,6 +629,7 @@ mv $WPATH/pHmap.png $WPATH/pngFiles
 rm $WPATH/io.mc $WPATH/*.png $WPATH/.*.png >/dev/null 2>/dev/null
 mv $WPATH/pngFiles/* $WPATH/ >/dev/null 2>/dev/null
 rm -r $WPATH/pngFiles >/dev/null 2>/dev/null
+rm -r $WPATH/.*.files >/dev/null 2>/dev/null
 }
 
 ## SCRIPT 
