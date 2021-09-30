@@ -23,7 +23,7 @@ Optionally activity data can be visualised as lollipop bars.
 
 ## Installation
 
-- Tested under Ubuntu_20, Ubuntu_16 and MacOSx_Catalina_10.15.7
+- Tested under Ubuntu_20, Ubuntu_16, MacOSx_Catalina_10.15.7 and Windows10 via WSL with Ubuntu_20
 - Programs: APBS_v3.0.0; pdb2pqr_v2.1.1; pymol_v2.3 & v2.4; ImageMagick 6.9.7-4 Q16 x86_64 & 7.0.10-45 Q16 x86_64
 
 ### SourceCode compiling
