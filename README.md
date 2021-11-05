@@ -1,5 +1,7 @@
 # pHmap
-Software for generating a surface charge based pH-profile map.
+Software for generating a surface charge based pH-profile map. 
+
+> Check out the [Medium story](https://erikbreslmayr.medium.com/multi-protein-ph-profile-surface-charge-maps-6937c1a2db1f).
 
 <img src="./pHmap_label.png" alt="pH_profile" style="zoom:50%;" />
 
