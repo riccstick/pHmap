@@ -1,74 +1,118 @@
 # pHmap
-Software for generating a surface charge based pH-profile map. 
 
-> Check out the [Medium story](https://erikbreslmayr.medium.com/multi-protein-ph-profile-surface-charge-maps-6937c1a2db1f).
+pHmap generates ordered maps of pH-dependent protein electrostatic surface
+potential. Protein protonation is prepared with PDB2PQR/PROPKA, electrostatic
+potential is calculated by APBS, surfaces are rendered by PyMOL, and the final
+figure is composed in Python.
 
-<img src="./pHmap_label.png" alt="pH_profile" style="zoom:50%;" />
+![pH profile example](./pHmap_label.png)
 
-Optionally activity data can be visualised as lollipop bars.
+The repository is being migrated from the original Bash program to a local,
+testable Python application. The first Python vertical slice supports one or
+more PDB files, explicit pH values or an inclusive pH range, an optional
+validated PyMOL camera view, deterministic rendering order, isolated run
+directories, and a complete JSON provenance manifest.
 
-<img src="./pHmap_label_activity.png" alt="pH_profile" style="zoom:50%;" />
+## Local quick start
 
-## Requirements
+The complete scientific workflow needs Python 3.11+, PDB2PQR 3.7.x, APBS
+3.4.1, and PyMOL Open Source. On Apple Silicon macOS, the supported development
+environment is described by `pixi.toml`:
 
-- [PDB2PQR](http://www.poissonboltzmann.org/) - for calculation of protonation states
-- [ABPS](http://www.poissonboltzmann.org/) - for calculation of electrostatic surface
-- [PyMol](https://github.com/schrodinger/pymol-open-source) - for generating surface visualization and .pngs
-- [ImageMagick](https://imagemagick.org/) - for generating final multi .png picture
-- [Argbash](https://argbash.readthedocs.io/en/latest/index.html) (argument parser generator)
+```console
+pixi install
+pixi run doctor
+pixi run test
+```
 
-## Citation 
+Validate the repository's two-pH smoke input without launching scientific
+programs:
+
+```console
+pixi run validate-smoke
+```
+
+Run the initial end-to-end workflow:
+
+```console
+pixi run smoke
+```
+
+The equivalent direct command is:
+
+```console
+phmap run example/mutant2.pdb \
+  --ph 5.0 \
+  --ph 7.0 \
+  --view example/set_view.txt
+```
+
+Every run is confined to its own directory:
+
+```text
+runs/<run-id>/
+├── manifest.json
+├── inputs/
+├── work/<protein-id>/<ph>/
+├── logs/<protein-id>/<ph>/
+├── renders/<protein-id>/
+└── output/pHmap.png
+```
+
+Without `--output-dir`, each invocation creates a unique timestamped run. An
+existing run directory is never overwritten implicitly. Failed scientific
+commands stop the workflow, preserve their logs, and mark the manifest as
+failed.
+
+See [the development guide](docs/development.md) for environment details,
+baseline policy, and current limitations.
+
+## Python-only development
+
+If compatible PDB2PQR, APBS, and PyMOL executables are already available on
+`PATH`, the Python project can also be installed with uv:
+
+```console
+uv sync --group dev
+uv run phmap doctor
+uv run pytest
+```
+
+`uv` does not install the APBS or PyMOL native programs; use the Pixi
+environment for the complete supported local toolchain.
+
+## Current scope
+
+Implemented in the first migration milestone:
+
+- strict PDB, pH range/list, ligand-path, and 18-value camera validation;
+- modern PDB2PQR, APBS, and headless PyMOL subprocess adapters;
+- deterministic multi-protein/pH ordering;
+- checked outputs, per-cell logs, tool-version capture, and input/output hashes;
+- a Python-native PNG grid and potential legend; and
+- unit and fake-backend integration tests that do not need the scientific tools.
+
+Activity lollipops, the legacy styling surface, cache-based selective reruns,
+and a local graphical interface are subsequent migration stages. The Bash and
+Script Server files remain temporarily as a feature and visual reference; they
+are not the implementation base for the Python workflow.
+
+## Scientific reproducibility
+
+The two historical PNGs are visual references, not numerical goldens: they do
+not contain a complete record of tool versions or APBS/PDB2PQR parameters. A
+new accepted baseline should retain the environment lock, manifest, PQR files,
+APBS inputs, DX maps, logs, tiles, and final figure. Numerical artifacts should
+be reviewed before tolerant visual comparison.
+
+## Citation
+
+Breslmayr, E. (2021). *pHmap - A tool for automatized calculation and
+visualization of protein surface charge pH-profiles* (Version v1.2). Zenodo.
+<https://doi.org/10.5281/zenodo.4751499>
 
 [![DOI](https://zenodo.org/badge/308921470.svg)](https://zenodo.org/badge/latestdoi/308921470)
 
-> Breslmayr, E. (2021). pHmap - A tool for automatized calculation and visualization of protein surface charge pH-profiles (Version v1.2). Zenodo. http://doi.org/10.5281/zenodo.4751499
+## License
 
-## Installation
-
-- Tested under Ubuntu_20, Ubuntu_16, MacOSx_Catalina_10.15.7 and Windows10 via WSL with Ubuntu_20
-- Programs: APBS_v3.0.0; pdb2pqr_v2.1.1; pymol_v2.3 & v2.4; ImageMagick 6.9.7-4 Q16 x86_64 & 7.0.10-45 Q16 x86_64
-
-### SourceCode compiling
-
-- Template file can be changed and converted to executable code (tested with argbash_2.10)
-
-  `argbash pHmap.template -o pHmap`
-
- - Completion file add to `/etc/bash_completion.d/`
-
-  `argbash pHmap.template --type completion --strip all -o pHmap.m4`
-
-- Required programs have to be in executable paths
-
-### PDB2PQR
-
-- Download from Github: [pdb2pqr_2.1.1](https://github.com/Electrostatics/pdb2pqr/releases/tag/v2.1.1)
-- [Install](https://erikbreslmayr.medium.com/installing-pre-compiled-apbs-for-electrostatic-surface-and-pdb2pqr-for-protonation-state-15fd068574b9)
-
-### ABPS
-
-- Download from Github: [ABTS_v3.0.0](https://github.com/Electrostatics/apbs/releases/tag/v3.0.0)
-- [Install](https://erikbreslmayr.medium.com/installing-pre-compiled-apbs-for-electrostatic-surface-and-pdb2pqr-for-protonation-state-15fd068574b9)
-
-### PyMol
-
-- Open Source PyMol v2.x
-- Ubuntu
-
-> `sudo apt install pymol`
-
-  - Mac
-
-> `brew install brewsci/bio/pymol`
-
-### ImageMagick
-
-- Ubuntu
-
-> `sudo apt-get install imagemagick`
->
-> -  Mac
-
-> `brew install imagemagick` 
-
-- [Commands](https://imagemagick.org/script/command-line-options.php#fill)
+[MIT](LICENSE)
