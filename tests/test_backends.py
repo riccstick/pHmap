@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
-import stat
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
+from fake_executable import executable
 
 from phmap.backends import (
     ApbsBackend,
@@ -30,12 +29,7 @@ from phmap.backends import (
 
 
 def _executable(tmp_path: Path, name: str, source: str) -> Path:
-    path = tmp_path / name
-    path.write_text(
-        f"#!{sys.executable}\n{textwrap.dedent(source)}", encoding="utf-8"
-    )
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
-    return path
+    return executable(tmp_path, name, source)
 
 
 def test_runner_uses_argv_and_keeps_per_stage_logs(tmp_path: Path) -> None:

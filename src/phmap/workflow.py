@@ -178,7 +178,7 @@ def _configuration(inputs: RunInputs, options: WorkflowOptions) -> dict[str, Any
 
 
 class LocalWorkflow:
-    """Run the first deterministic, local pHmap vertical slice."""
+    """Run the deterministic local calculation and rendering workflow."""
 
     def __init__(self, inputs: RunInputs, options: WorkflowOptions | None = None) -> None:
         self.inputs = inputs
@@ -255,6 +255,7 @@ class LocalWorkflow:
                     paths = workspace.task_paths(protein.protein_id, ph_key)
                     runner = CommandRunner(paths.pdb2pqr_stdout.parent, self.options.timeout)
                     try:
+                        manifest.start_stage(task, "pdb2pqr")
                         pqr_backend = Pdb2pqrBackend(runner, executables["pdb2pqr"])
                         pqr_artifacts = pqr_backend.run(
                             Pdb2pqrRequest(
@@ -284,6 +285,7 @@ class LocalWorkflow:
                                 "Workspace potential path does not match PDB2PQR output"
                             )
                         apbs_backend = ApbsBackend(runner, executables["apbs"])
+                        manifest.start_stage(task, "apbs")
                         apbs_artifacts = apbs_backend.run(
                             ApbsRequest(
                                 apbs_input_path=pqr_artifacts.apbs_input_path,
@@ -307,6 +309,7 @@ class LocalWorkflow:
                         )
 
                         pymol_backend = PyMOLBackend(runner, executables["pymol"])
+                        manifest.start_stage(task, "pymol")
                         pymol_artifacts = pymol_backend.render(
                             PyMOLRenderRequest(
                                 pqr_path=pqr_artifacts.pqr_path,

@@ -23,7 +23,7 @@ class RenderedTile:
 
 @dataclass(frozen=True, slots=True)
 class CompositionSettings:
-    """Presentation settings for the first Python compositor."""
+    """Presentation settings for the Python compositor."""
 
     background: str | None = None
     foreground: str = "black"

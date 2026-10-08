@@ -12,6 +12,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from phmap.processes import hidden_process_options
+
 from .errors import (
     BackendValidationError,
     CommandExecutionError,
@@ -180,6 +182,7 @@ class CommandRunner:
                         shell=False,
                         check=False,
                         timeout=effective_timeout,
+                        **hidden_process_options(),
                     )
                 except subprocess.TimeoutExpired as exc:
                     message = (

@@ -12,6 +12,8 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from phmap.processes import hidden_process_options
+
 
 @dataclass(frozen=True, slots=True)
 class DoctorResult:
@@ -88,6 +90,7 @@ def check_tool(
             text=True,
             timeout=timeout,
             cwd=cwd,
+            **hidden_process_options(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return DoctorResult(

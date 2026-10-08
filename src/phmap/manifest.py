@@ -111,8 +111,15 @@ class RunManifest:
         task["stages"].append(stage)
         self.write()
 
+    def start_stage(self, task: dict[str, Any], name: str) -> None:
+        """Expose the active stage to CLI and GUI progress readers."""
+
+        task["current_stage"] = name
+        self.write()
+
     def finish_task(self, task: dict[str, Any], status: str, *, error: str | None = None) -> None:
         task["status"] = status
+        task.pop("current_stage", None)
         task["finished_at"] = utc_now()
         if error is not None:
             task["error"] = error

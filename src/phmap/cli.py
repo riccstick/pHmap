@@ -105,6 +105,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="run PDB2PQR, APBS, PyMOL, and composition")
     _add_input_arguments(run, include_run=True)
+    gui = commands.add_parser("gui", help="open the local browser interface")
+    gui.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    gui.add_argument("--port", type=int, default=8765)
+    gui.add_argument("--no-browser", action="store_true", help="print the URL without opening it")
     return parser
 
 
@@ -205,6 +209,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _validate(args)
         if args.command == "run":
             return _run(args)
+        if args.command == "gui":
+            from phmap.gui.app import serve
+
+            try:
+                serve(runs_dir=args.runs_dir, port=args.port, open_browser=not args.no_browser)
+            except KeyboardInterrupt:
+                return 130
+            return 0
         parser.error(f"unknown command: {args.command}")
     except (InputValidationError, PHMapError, ScientificBackendError) as exc:
         print(f"phmap: error: {exc}", file=sys.stderr)

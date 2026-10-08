@@ -22,6 +22,10 @@ classifiers = [
 ]
 dependencies = [
   "Pillow>=11.0,<13",
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+  "Jinja2>=3.1,<4",
+  "python-multipart>=0.0.20,<1",
 ]
 
 [project.scripts]
@@ -29,11 +33,14 @@ phmap = "phmap.cli:main"
 
 [dependency-groups]
 dev = [
+  "distlib>=0.4,<1",
+  "httpx>=0.28,<1",
   "mypy>=1.15",
   "pytest>=8.3",
   "pytest-cov>=6.0",
   "ruff>=0.11",
 ]
+desktop-build = ["pyinstaller>=6.16,<7"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/phmap"]
@@ -57,3 +64,7 @@ packages = ["phmap"]
 # Python 3.12. Check pHmap at its declared minimum without recursively parsing
 # unrelated third-party implementation stubs.
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["fastapi.*", "starlette.*", "pydantic.*", "uvicorn.*"]
+follow_imports = "normal"

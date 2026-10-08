@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import json
-import stat
-import sys
-import textwrap
 from pathlib import Path
 
 import pytest
+from fake_executable import executable
 from PIL import Image
 
 from phmap.backends import CommandExecutionError
@@ -15,13 +13,7 @@ from phmap.workflow import LocalWorkflow, WorkflowOptions
 
 
 def _executable(tmp_path: Path, name: str, source: str) -> Path:
-    path = tmp_path / "tools" / name
-    path.parent.mkdir(exist_ok=True)
-    path.write_text(
-        f"#!{sys.executable}\n{textwrap.dedent(source)}", encoding="utf-8"
-    )
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
-    return path
+    return executable(tmp_path / "tools", name, source)
 
 
 def _fake_tools(tmp_path: Path, *, fail_apbs: bool = False) -> tuple[Path, Path, Path]:
