@@ -1,0 +1,38 @@
+[workspace]
+name = "phmap"
+description = "Local development environment for pHmap"
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "osx-64", "win-64", "linux-64"]
+
+[dependencies]
+python = "3.12.*"
+apbs = "3.4.1.*"
+pymol-open-source = "3.1.0.*"
+
+[pypi-dependencies]
+phmap = { path = ".", editable = true }
+# conda-forge currently trails the upstream PDB2PQR release used by this baseline.
+pdb2pqr = "~=3.7.1"
+
+[feature.dev.pypi-dependencies]
+distlib = ">=0.4,<1"
+pytest = "*"
+pytest-cov = "*"
+ruff = "*"
+mypy = "*"
+httpx = ">=0.28,<1"
+pyinstaller = ">=6.16,<7"
+
+[environments]
+default = { features = ["dev"], solve-group = "phmap" }
+runtime = { features = [], solve-group = "phmap" }
+
+[tasks]
+doctor = "phmap doctor"
+gui = "phmap gui"
+validate-smoke = "phmap validate example/mutant2.pdb --ph 5.0 --ph 7.0 --view example/set_view.txt"
+smoke = "phmap run example/mutant2.pdb --ph 5.0 --ph 7.0 --view example/set_view.txt"
+test = "pytest"
+lint = "ruff check ."
+typecheck = "mypy src"
+build-app = "python scripts/build_desktop.py"

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="phmap-token" content="{{ token }}">
+  <title>pHmap · Local workspace</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="pHmap home"><img src="/static/icon.svg" alt="">pHmap<span>2</span></a>
+    <p class="brand-caption">PROTEIN ELECTROSTATICS</p>
+    <button class="new-run" id="new-run" type="button"><span>+</span> New calculation</button>
+    <div class="sidebar-heading"><span>RUN HISTORY</span><button id="refresh-history" class="icon-button" title="Refresh run history" aria-label="Refresh run history">↻</button></div>
+    <div id="history" class="history" aria-label="Run history"><p class="sidebar-muted">Loading your runs…</p></div>
+    <footer class="sidebar-footer"><span class="local-dot"></span> Runs on your computer<br><span class="sidebar-version">pHmap {{ version }}</span></footer>
+  </aside>
+
+  <main>
+    <header class="topbar"><span>Workspace <span class="slash">/</span> Surface maps</span><span class="local-badge">LOCAL SESSION</span></header>
+    <div class="page-content">
+      <section class="page-heading"><div><p class="eyebrow">FROM STRUCTURE TO SURFACE</p><h1>Protein surfaces, across pH.</h1><p>Compare electrostatic potential across proteins and protonation states.</p></div><div class="ramp-key" aria-label="Red negative potential, blue positive potential"><div></div><span>negative</span><span>positive</span></div></section>
+
+      <div class="workspace-grid">
+        <section class="setup-panel card">
+          <div class="card-heading"><h2>Set up a calculation</h2><span class="step-badge">01 — CONFIGURE</span></div>
+          <form id="run-form">
+            <label class="field-label" for="run-name">Calculation name <span class="optional">optional</span></label>
+            <input id="run-name" type="text" maxlength="120" placeholder="e.g. Wild type vs mutants">
+
+            <div class="section-heading"><h3>Protein structures</h3><span class="field-hint">.pdb · up to 32 files</span></div>
+            <label class="file-drop" id="file-drop" for="proteins"><span class="upload-icon">↥</span><strong>Choose PDB files</strong><span>or drag and drop them here</span><input id="proteins" type="file" accept=".pdb" multiple aria-label="Choose protein PDB files"></label>
+            <div id="protein-list" class="protein-list"></div>
+            <p class="field-hint" id="order-hint" hidden>One row per protein. Edit labels or change the row order below.</p>
+
+            <div class="section-heading"><h3>pH selection</h3></div>
+            <div class="segmented" role="group" aria-label="pH selection mode"><label><input type="radio" name="ph-mode" value="range" checked><span>Range</span></label><label><input type="radio" name="ph-mode" value="explicit"><span>Specific values</span></label></div>
+            <div id="range-fields" class="three-fields"><label>From<input id="ph-start" type="number" min="0" max="14" step="any" value="3" required></label><label>To<input id="ph-stop" type="number" min="0" max="14" step="any" value="8" required></label><label>Step<input id="ph-step" type="number" min="0.0001" max="14" step="any" value="1" required></label></div>
+            <div id="explicit-fields" hidden><label class="field-label" for="ph-values">pH values, in column order</label><input id="ph-values" type="text" placeholder="3, 4, 5, 6, 7, 8"><p class="field-hint">Separate values with commas or spaces.</p></div>
+            <div class="calculation-count" id="calculation-count">Choose proteins to preview your calculation.</div>
+
+            <details class="settings-details"><summary>Camera &amp; ligand <span>optional</span></summary><label class="field-label" for="view">PyMOL camera view</label><input id="view" type="file" accept=".txt"><p class="field-hint">An 18-number view exported from PyMOL. Without one, each structure is automatically oriented.</p><label class="field-label" for="ligand">Shared ligand <span class="optional">experimental</span></label><input id="ligand" type="file" accept=".mol2"><p class="field-hint">Applied to every supplied protein.</p></details>
+
+            <details class="settings-details"><summary>Figure &amp; calculation settings</summary><div class="two-fields"><label>Tile size, px<input id="size" type="number" min="64" max="4096" value="500"></label><label>DPI<input id="dpi" type="number" min="1" max="4800" value="300"></label><label>Potential limit, ±<input id="level" type="number" min="0.01" step="any" value="5"></label><label>Background<select id="background"><option value="white">White</option><option value="transparent">Transparent</option><option value="black">Black</option></select></label><label>Potential colors<select id="ramp"><option value="red,white,blue">Red → white → blue</option><option value="blue,white,red">Blue → white → red</option></select></label><label>Force field<select id="force-field"><option>PARSE</option><option>AMBER</option><option>CHARMM</option></select></label></div><label class="checkbox"><input id="ray" type="checkbox" checked> Ray trace final surfaces</label></details>
+
+            <div id="form-message" role="status" aria-live="polite" hidden></div>
+            <div class="form-actions"><button type="button" id="validate" class="button secondary">Validate</button><button type="submit" id="submit" class="button primary" disabled>Start calculation <span>→</span></button></div>
+            <p class="form-footnote">Every run is saved separately. Your original files are preserved.</p>
+          </form>
+        </section>
+
+        <div class="results-column">
+          <section class="toolchain card"><div><span id="toolchain-dot" class="status-dot loading"></span><strong id="toolchain-title">Checking calculation tools…</strong></div><button id="recheck-tools" class="text-button" type="button">Check again</button><div id="toolchain-checks" class="toolchain-checks"></div></section>
+
+          <section id="empty-state" class="empty-state card"><div class="empty-graphic" aria-hidden="true"><span class="surface red-surface"></span><span class="surface mixed-surface"></span><span class="surface blue-surface"></span></div><p class="eyebrow">YOUR NEXT COMPARISON</p><h2>A clearer view of surface charge.</h2><p>Add protein structures and a pH range.<br>Your surface map and individual renders will appear here.</p><div class="empty-steps"><span>01 Configure</span><span>02 Calculate</span><span>03 Compare</span></div></section>
+
+          <section id="run-detail" class="card run-detail" hidden aria-live="polite">
+            <div class="run-heading"><div><p class="eyebrow" id="run-origin">CALCULATION</p><h2 id="run-title"></h2><p id="run-time" class="field-hint"></p></div><span id="run-status" class="status-badge"></span></div>
+            <div class="progress-heading"><span id="progress-label"></span><button id="cancel" class="text-button danger" type="button" hidden>Cancel calculation</button></div>
+            <progress id="run-progress" value="0" max="100" aria-label="Calculation progress"></progress><p id="active-stage" class="active-stage"></p>
+            <div id="run-error" class="message error" hidden></div>
+            <div id="figure-panel" hidden><div class="preview-heading"><h3>Surface map</h3><a id="download-figure" class="button secondary small" download>Download PNG ↓</a></div><a id="full-figure" target="_blank" rel="noopener" aria-label="Open full size surface map"><div class="figure-preview"><img id="figure" alt="pH-dependent protein electrostatic surface map"></div></a></div>
+            <div id="cell-table-wrap" class="table-wrap"><table><thead><tr><th>Protein</th><th>pH</th><th>Status</th><th>Charge, e</th></tr></thead><tbody id="cells"></tbody></table></div>
+            <details id="tiles-details" class="result-details" hidden><summary>Individual surface renders</summary><div id="tiles" class="tiles"></div></details>
+            <details class="result-details" id="logs-details"><summary>Calculation logs &amp; provenance</summary><label class="field-label" for="log-select">Stage log</label><select id="log-select"><option value="">Select a log…</option></select><pre id="log-content">Select a stage log to inspect its latest output.</pre><pre id="worker-log" hidden></pre><a id="download-manifest" class="text-button" download hidden>Download manifest.json ↓</a><p class="field-hint">Saved in <code id="run-directory"></code></p></details>
+          </section>
+        </div>
+      </div>
+      <footer class="page-footer">PDB2PQR / PROPKA <span>→</span> APBS <span>→</span> PyMOL <span>·</span> All calculations and files stay on your computer.</footer>
+    </div>
+  </main>
+  <noscript><p class="message error">Enable JavaScript to select files and monitor calculations. The command-line interface is also available.</p></noscript>
+</body>
+</html>

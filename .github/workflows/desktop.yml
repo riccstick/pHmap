@@ -1,0 +1,118 @@
+name: CI and desktop releases
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Different commits keep their checks; only duplicate runs for the same
+  # commit may supersede one another. Release runs are never cancelled here.
+  group: desktop-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            runner: macos-14
+          - target: macos-x64
+            runner: macos-15-intel
+          - target: windows-x64
+            runner: windows-2022
+          - target: linux-x64
+            runner: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Prepare Linux graphical test display
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth
+      - uses: prefix-dev/setup-pixi@9dabb60412d3d2d967a8d682f7ce01317af40514 # v0.11.0
+        with:
+          pixi-version: v0.75.0
+          locked: true
+          cache: true
+      - name: Unit and integration tests
+        run: pixi run --locked test
+      - name: Lint source
+        run: pixi run --locked lint
+      - name: Type check source
+        run: pixi run --locked typecheck
+      - name: Scientific toolchain preflight
+        run: pixi run --locked doctor
+      - name: Real scientific smoke run
+        run: pixi run --locked smoke
+      - name: Verify release tag matches version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: pixi run python {0}
+        run: |
+          import os
+          import tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('pyproject.toml').read_text())['project']['version']
+          assert os.environ['RELEASE_TAG'] == f'v{version}', 'Tag must match pyproject.toml version'
+      - name: Build native launcher and archive
+        run: pixi run --locked build-app
+      - name: Check frozen launcher, setup, assets, and offline restart
+        if: runner.os != 'Linux'
+        run: pixi run --locked python scripts/check_desktop.py
+      - name: Check Linux frozen launcher and native window
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum pixi run --locked python scripts/check_desktop.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: desktop-${{ matrix.target }}
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve diagnostic logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: diagnostics-${{ matrix.target }}
+          path: |
+            runs/**/logs/**
+            runs/**/manifest.json
+          retention-days: 7
+
+  release:
+    name: Prepare GitHub release
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+      - name: Create a draft release with verified builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --verify-tag --draft --generate-notes --title "pHmap $RELEASE_TAG"
