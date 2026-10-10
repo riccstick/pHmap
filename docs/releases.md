@@ -198,16 +198,18 @@ The workflow:
 6. On a `v*` tag, creates a **draft** GitHub Release only after all builds pass.
 
 Set the same version in `pyproject.toml` and `src/phmap/__init__.py`, refresh
-`uv.lock` and `pixi.lock`, commit, and tag that commit. For the current version:
+`uv.lock` and `pixi.lock`, and commit the change. After it is merged and the
+required checks pass, tag that exact commit. For the 2.0.0 stable release:
 
 ```console
-git tag v2.0.0a1
-git push origin v2.0.0a1
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 The build rejects tags that do not match `pyproject.toml`. Once Actions is green,
 open **Releases**, inspect the draft, download/test the apps on clean machines,
-edit release notes, mark alpha/beta releases as **pre-release**, and publish.
+edit the release notes, and publish. Mark alpha/beta tags as **pre-release**;
+stable tags such as `v2.0.0` should be published as the latest stable release.
 Manual workflow runs create downloadable artifacts but no release.
 
 Only the release job receives `contents: write`; builds have read-only repo
