@@ -90,6 +90,10 @@ first launch downloads the locked scientific environment automatically. Python,
 Pixi, and the backends do not need to be installed manually. Internet is needed
 for first-time setup, not for subsequent calculations.
 
+If first-time setup fails behind a company VPN or HTTPS inspection, see the
+[desktop troubleshooting guide](docs/releases.md#troubleshooting) for safe
+certificate/proxy checks and the setup log location.
+
 Start the browser interface from the repository root:
 
 ```console
