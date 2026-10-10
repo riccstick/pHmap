@@ -16,6 +16,7 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+/site/
 
 # Local environments (pixi.lock is intentionally tracked)
 .pixi/
