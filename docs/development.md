@@ -159,6 +159,27 @@ Tests cover actual worker subprocesses with fake scientific tools, multi-file
 validation, SSE completion, cancellation, restart handling, CLI history, and
 artifact containment. Run them through the normal `pixi run test` task.
 
+## Preview the documentation website
+
+The public documentation is built with [Zensical](https://zensical.org/) from
+Markdown files in `docs/`. To preview changes locally without installing it
+into the project environment, run from the repository root:
+
+```console
+uvx --from "zensical==0.0.69" zensical serve
+```
+
+Then open <http://127.0.0.1:8000>. Build the same site as the GitHub Actions
+workflow with:
+
+```console
+uvx --from "zensical==0.0.69" zensical build --clean --strict
+```
+
+The generated `site/` directory is local build output and is not committed.
+The workflow builds every pull request and publishes successful pushes to
+`main` or `master` through GitHub Pages.
+
 ## Scientific baseline policy
 
 A reproducible pHmap result is defined by more than the final image. For every

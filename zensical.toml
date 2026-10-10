@@ -1,0 +1,42 @@
+[project]
+site_name = "pHmap"
+site_description = "Local tools and documentation for protein pH maps"
+site_url = "https://riccstick.github.io/pHmap/"
+repo_url = "https://github.com/riccstick/pHmap"
+docs_dir = "docs"
+site_dir = "site"
+extra_css = ["stylesheets/extra.css"]
+nav = [
+  { "Home" = "index.md" },
+  { "Tutorial" = "tutorial.md" },
+  { "Downloads" = "downloads.md" },
+  { "Project" = [
+    { "Development" = "development.md" },
+    { "Release guide" = "releases.md" },
+    { "Feature roadmap" = "feature-roadmap.md" },
+  ] },
+]
+
+[project.theme]
+features = [
+  "navigation.tabs",
+  "navigation.sections",
+  "search.suggest",
+  "search.highlight",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "custom"
+accent = "green"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "custom"
+accent = "green"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
