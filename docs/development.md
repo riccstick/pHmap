@@ -86,13 +86,16 @@ Equivalent direct invocation:
 phmap run example/mutant2.pdb \
   --ph 5.0 \
   --ph 7.0 \
-  --view example/set_view.txt
+  --view example/set_view.txt \
+  --runs-dir 'runs/Scientific smoke with spaces'
 ```
 
 The real smoke workflow requires working PDB2PQR, APBS, and headless PyMOL
-executables. Each smoke invocation creates a unique directory below `runs/`,
-which is ignored by Git. Supply `--output-dir` when a fixed, new destination is
-useful; existing destinations are deliberately rejected. Preserve a run outside
+executables. Each smoke invocation creates a unique directory below
+`runs/Scientific smoke with spaces/`, which is ignored by Git. The spaced path
+regresses APBS input/output filename handling, including the macOS desktop's
+`Application Support` storage directory. Supply `--output-dir` when a fixed,
+new destination is useful; existing destinations are deliberately rejected. Preserve a run outside
 `runs/` when it is needed as reviewed validation evidence.
 
 ## Current limitations

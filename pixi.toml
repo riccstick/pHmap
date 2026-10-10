@@ -31,7 +31,7 @@ runtime = { features = [], solve-group = "phmap" }
 doctor = "phmap doctor"
 gui = "phmap gui"
 validate-smoke = "phmap validate example/mutant2.pdb --ph 5.0 --ph 7.0 --view example/set_view.txt"
-smoke = "phmap run example/mutant2.pdb --ph 5.0 --ph 7.0 --view example/set_view.txt"
+smoke = "phmap run example/mutant2.pdb --ph 5.0 --ph 7.0 --view example/set_view.txt --runs-dir 'runs/Scientific smoke with spaces'"
 test = "pytest"
 lint = "ruff check ."
 typecheck = "mypy src"

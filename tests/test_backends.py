@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from phmap.backends import (
     discover_executable,
     pdb2pqr_dx_path,
 )
+from phmap.scientific import summarize_opendx
 
 
 def _executable(tmp_path: Path, name: str, source: str) -> Path:
@@ -243,6 +245,121 @@ def test_apbs_backend_checks_dx_and_optional_apbs_output(tmp_path: Path) -> None
     assert artifacts.dx_path.read_text(encoding="utf-8").startswith("object")
     assert artifacts.apbs_output_path is not None
     assert artifacts.apbs_output_path.read_text(encoding="utf-8") == "APBS complete\n"
+
+
+@pytest.mark.parametrize("filename", ["model.pqr", "model with spaces.pqr"])
+def test_pdb2pqr_backend_localizes_generated_apbs_filenames(
+    tmp_path: Path, filename: str,
+) -> None:
+    tool = _executable(
+        tmp_path,
+        "pdb2pqr30",
+        r'''
+        import pathlib
+        import sys
+
+        args = sys.argv[1:]
+        apbs_input = pathlib.Path(
+            next(arg.split("=", 1)[1] for arg in args if arg.startswith("--apbs-input="))
+        )
+        pqr = pathlib.Path(args[-1])
+        pqr.write_text("ATOM 1 N ALA 1 0 0 0 1 1.5\n", encoding="utf-8")
+        apbs_input.write_text(
+            f"read\n    mol pqr {pqr.name}\nend\n"
+            "elec\n    dime 33 33 33\n"
+            f"    write pot dx {pqr}\n"
+            "    write pot dx unrelated-potential\nend\nquit\n",
+            encoding="utf-8",
+        )
+        ''',
+    )
+    pdb = tmp_path / "protein.pdb"
+    pdb.write_text("ATOM\n", encoding="utf-8")
+    work = tmp_path / "Application Support" / "pHmap"
+    request = Pdb2pqrRequest(
+        pdb_path=pdb,
+        pqr_path=work / filename,
+        apbs_input_path=work / "apbs.in",
+        ph=4,
+    )
+
+    artifacts = Pdb2pqrBackend(CommandRunner(tmp_path / "logs"), tool).run(request)
+
+    safe_name = f'"{filename}"' if " " in filename else filename
+    assert artifacts.apbs_input_path.read_text(encoding="utf-8") == (
+        f"read\n    mol pqr {safe_name}\nend\n"
+        "elec\n    dime 33 33 33\n"
+        f"    write pot dx {safe_name}\n"
+        "    write pot dx unrelated-potential\nend\nquit\n"
+    )
+
+
+@pytest.mark.parametrize("filename", ["model.pqr", "model with spaces.pqr"])
+def test_real_apbs_reads_generated_input_in_directory_with_spaces(
+    tmp_path: Path, filename: str,
+) -> None:
+    apbs = shutil.which("apbs")
+    if apbs is None:
+        pytest.skip("APBS is required for the real solver regression (included in Pixi/CI)")
+    tool = _executable(
+        tmp_path,
+        "pdb2pqr30",
+        r'''
+        import pathlib
+        import sys
+
+        args = sys.argv[1:]
+        apbs_input = pathlib.Path(
+            next(arg.split("=", 1)[1] for arg in args if arg.startswith("--apbs-input="))
+        )
+        pqr = pathlib.Path(args[-1])
+        pqr.write_text("ATOM 1 N ALA 1 0 0 0 1 1.5\n", encoding="utf-8")
+        apbs_input.write_text(
+            f"read\n    mol pqr {pqr.name}\nend\n"
+            "elec\n    mg-auto\n    dime 33 33 33\n"
+            "    cglen 20 20 20\n    fglen 12 12 12\n"
+            "    cgcent mol 1\n    fgcent mol 1\n    mol 1\n"
+            "    lpbe\n    bcfl sdh\n    pdie 2\n    sdie 78.54\n"
+            "    srfm smol\n    chgm spl2\n    sdens 10\n"
+            "    srad 1.4\n    swin 0.3\n    temp 298.15\n"
+            "    calcenergy total\n    calcforce no\n"
+            f"    write pot dx {pqr}\nend\nquit\n",
+            encoding="utf-8",
+        )
+        ''',
+    )
+    pdb = tmp_path / "protein.pdb"
+    pdb.write_text("ATOM\n", encoding="utf-8")
+    work = tmp_path / "Application Support" / "pHmap"
+    runner = CommandRunner(tmp_path / "logs", default_timeout=30)
+    pqr = Pdb2pqrBackend(runner, tool).run(
+        Pdb2pqrRequest(
+            pdb_path=pdb,
+            pqr_path=work / filename,
+            apbs_input_path=work / "apbs.in",
+            ph=4,
+        )
+    )
+
+    result = ApbsBackend(runner, apbs).run(
+        ApbsRequest(apbs_input_path=pqr.apbs_input_path, dx_path=pdb2pqr_dx_path(pqr.pqr_path))
+    )
+
+    assert result.command.returncode == 0
+    assert summarize_opendx(result.dx_path).grid_counts == (33, 33, 33)
+
+
+@pytest.mark.parametrize("filename", ['model"map.pqr', "model#map.pqr", "model\nmap.pqr"])
+def test_pdb2pqr_rejects_filenames_with_apbs_control_syntax(
+    tmp_path: Path, filename: str,
+) -> None:
+    with pytest.raises(BackendValidationError, match="unsupported APBS characters"):
+        Pdb2pqrRequest(
+            pdb_path=tmp_path / "protein.pdb",
+            pqr_path=tmp_path / filename,
+            apbs_input_path=tmp_path / "apbs.in",
+            ph=4,
+        )
 
 
 def test_pymol_options_reject_raw_command_content_and_bad_views() -> None:

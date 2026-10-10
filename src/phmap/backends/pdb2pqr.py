@@ -13,6 +13,10 @@ from .errors import BackendValidationError
 from .runner import CommandResult, CommandRunner, VersionInfo, discover_executable
 
 _FORCE_FIELD_PATTERN = re.compile(r"[A-Za-z0-9_-]+\Z")
+_APBS_FILE_DIRECTIVE = re.compile(
+    r"^([ \t]*(?:mol[ \t]+pqr|write[ \t]+pot[ \t]+dx)[ \t]+)([^\r\n]+)$",
+    re.MULTILINE,
+)
 
 
 def _path(value: str | os.PathLike[str]) -> Path:
@@ -41,6 +45,38 @@ def pdb2pqr_dx_path(pqr_path: str | os.PathLike[str]) -> Path:
     return Path(f"{Path(pqr_path)}.dx")
 
 
+def _apbs_filename(filename: str) -> str:
+    if any(character in filename for character in '#"') or any(
+        ord(character) < 32 for character in filename
+    ):
+        raise BackendValidationError("PQR filename contains unsupported APBS characters")
+    if any(character.isspace() for character in filename):
+        return f'"{filename}"'
+    return filename
+
+
+def _localize_apbs_filenames(apbs_input: Path, pqr_path: Path) -> None:
+    """Keep PDB2PQR's generated filenames safe inside their shared directory.
+
+    PDB2PQR 3.7 writes an unquoted absolute DX output prefix. APBS splits it
+    at spaces (notably macOS's Application Support directory). Only rewrite
+    references to this PQR; preserve other output names and solver settings.
+    """
+    filename = _apbs_filename(pqr_path.name)
+    references = {pqr_path.name, str(pqr_path.resolve())}
+    references.update(f'"{reference}"' for reference in tuple(references))
+
+    def replace(match: re.Match[str]) -> str:
+        if match[2].strip() in references:
+            return f"{match[1]}{filename}"
+        return match[0]
+
+    original = apbs_input.read_text(encoding="utf-8")
+    localized = _APBS_FILE_DIRECTIVE.sub(replace, original)
+    if localized != original:
+        apbs_input.write_text(localized, encoding="utf-8")
+
+
 @dataclass(frozen=True, slots=True)
 class Pdb2pqrRequest:
     """Inputs and expected outputs for one PDB2PQR calculation."""
@@ -58,6 +94,7 @@ class Pdb2pqrRequest:
         object.__setattr__(self, "pdb_path", _path(self.pdb_path))
         object.__setattr__(self, "pqr_path", _path(self.pqr_path))
         object.__setattr__(self, "apbs_input_path", _path(self.apbs_input_path))
+        _apbs_filename(self.pqr_path.name)
         if self.ligand_path is not None:
             object.__setattr__(self, "ligand_path", _path(self.ligand_path))
         if self.work_dir is not None:
@@ -152,6 +189,7 @@ class Pdb2pqrBackend:
         )
         pqr = require_nonempty_file(request.pqr_path, "PQR output")
         apbs_input = require_nonempty_file(request.apbs_input_path, "APBS input")
+        _localize_apbs_filenames(apbs_input, pqr)
         return Pdb2pqrArtifacts(pqr, apbs_input, result)
 
     def version(
