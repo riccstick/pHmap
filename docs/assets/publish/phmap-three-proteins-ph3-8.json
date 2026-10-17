@@ -1,0 +1,111 @@
+{
+  "purpose": "Illustration for the pHmap 2.0 story; not an accepted scientific regression baseline.",
+  "application": {
+    "name": "phmap",
+    "version": "2.0.0"
+  },
+  "source_run_id": "20261017T164706Z-41e722",
+  "status": "completed",
+  "created_at": "2026-10-17T16:47:06.518520Z",
+  "finished_at": "2026-10-17T17:50:36.617832Z",
+  "completed_cells": 18,
+  "configuration": {
+    "ph_mode": "range",
+    "ph_values": [
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8"
+    ],
+    "proteins": [
+      {
+        "id": "protein",
+        "label": "Reference",
+        "pdb": "protein.pdb",
+        "ligand": null
+      },
+      {
+        "id": "mutant1",
+        "label": "Mutant 1",
+        "pdb": "mutant1.pdb",
+        "ligand": null
+      },
+      {
+        "id": "mutant2",
+        "label": "Mutant 2",
+        "pdb": "mutant2.pdb",
+        "ligand": null
+      }
+    ],
+    "render": {
+      "background": "white",
+      "dpi": 300,
+      "foreground": "black",
+      "potential_level": 5,
+      "ramp_colors": [
+        "red",
+        "white",
+        "blue"
+      ],
+      "ray_trace": true,
+      "size": 500
+    },
+    "scientific": {
+      "drop_water": true,
+      "force_field": "PARSE",
+      "titration_state_method": "propka"
+    },
+    "view": [
+      -0.583356678,
+      -0.747116983,
+      0.318607748,
+      -0.694660485,
+      0.255667239,
+      -0.672370017,
+      0.420881391,
+      -0.613555789,
+      -0.668137789,
+      0,
+      0,
+      -270.598022461,
+      149.767730713,
+      27.725906372,
+      172.819793701,
+      213.341552734,
+      327.854492188,
+      -20
+    ]
+  },
+  "inputs": [
+    {
+      "role": "protein:protein",
+      "filename": "protein.pdb",
+      "sha256": "7f190649d110df58eb41f6eb55d8b200e7de26dbdae27f8d16e5a649e5e614f7",
+      "size": 365322
+    },
+    {
+      "role": "protein:mutant1",
+      "filename": "mutant1.pdb",
+      "sha256": "ccefbe2098252ed0a50b1588a7350e0df973db8ac8a3f455022f3e43087e460a",
+      "size": 364269
+    },
+    {
+      "role": "protein:mutant2",
+      "filename": "mutant2.pdb",
+      "sha256": "2760e4f43acf3fc1ad299405b77b8563adf556a69d915ffee0e601d55aa640ee",
+      "size": 358760
+    }
+  ],
+  "tools": {
+    "apbs": "Version APBS 3.4.1",
+    "pdb2pqr": "pdb2pqr 3.7.1",
+    "pymol": "PyMOL 3.1.0 Open-Source, 2026-03-24"
+  },
+  "figure": {
+    "filename": "phmap-three-proteins-ph3-8.png",
+    "sha256": "1060c384ceed81c1fc6487aa2931c9e4cef0a89887fcb518aa30dbdd75f41d0f",
+    "size": 2375779
+  }
+}

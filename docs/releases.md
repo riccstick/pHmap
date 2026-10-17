@@ -45,6 +45,32 @@ downloads; Windows currently targets x64, not ARM.
 
 ## Troubleshooting
 
+### macOS blocks pHmap from an unidentified developer
+
+The current macOS builds are not Developer ID-signed or notarized. Gatekeeper
+may therefore block the first launch, reporting that the developer cannot be
+verified or that Apple cannot check the app for malicious software.
+
+If you downloaded pHmap from the official
+[GitHub Releases page](https://github.com/riccstick/pHmap/releases) and trust the
+build, approve it individually:
+
+1. Extract the download and try opening **pHmap.app** once. Dismiss the warning
+   without moving the app to the Trash.
+2. Open **Apple menu → System Settings → Privacy & Security** and scroll to
+   **Security**.
+3. Find the notice that pHmap was blocked and click **Open Anyway**. Some macOS
+   versions show **Open** first, followed by **Open Anyway**.
+4. Authenticate if prompted, then confirm **Open** to start pHmap.
+
+macOS saves this app as an exception, so subsequent launches normally work by
+double-clicking it. If the approval button is missing, try opening pHmap again;
+the button is available for about an hour after a blocked attempt. On a managed
+Mac, your IT administrator may need to approve it.
+
+Keep Gatekeeper enabled. See Apple's
+[instructions for opening an app from an unknown developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
+
 ### Windows first-run download fails on a company network
 
 #### Symptoms

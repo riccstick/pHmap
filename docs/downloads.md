@@ -22,6 +22,10 @@ troubleshooting guide](releases.md) before proceeding, and only install builds
 you trust. Linux packages target x64 desktop systems and are not universal
 Linux or ARM builds.
 
+On macOS, first launch may require approval in **System Settings → Privacy &
+Security**. Follow the [macOS approval steps](releases.md#macos-blocks-phmap-from-an-unidentified-developer)
+to allow pHmap to open.
+
 For step-by-step usage, start with the [tutorial](tutorial.md). The full
 [release guide](releases.md) covers app storage, first-run setup, and known
 platform limitations.

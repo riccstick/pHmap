@@ -10,6 +10,7 @@ nav = [
   { "Home" = "index.md" },
   { "Tutorial" = "tutorial.md" },
   { "Downloads" = "downloads.md" },
+  { "Stories" = "publish/phmap-2-0.md" },
   { "Project" = [
     { "Development" = "development.md" },
     { "Release guide" = "releases.md" },
