@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -108,6 +109,23 @@ def test_executable_discovery_and_version_probe(tmp_path: Path) -> None:
     assert version.returncode == 0
     assert version.output == "version-tool 2.4.1"
     assert version.argv == (str(tool.resolve()), "--version")
+
+
+def test_version_probe_uses_the_hidden_child_process_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+
+    def run(argv, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(kwargs)
+        return subprocess.CompletedProcess(argv, 0, "APBS 3.4.1", "")
+
+    monkeypatch.setattr("phmap.backends.runner.subprocess.run", run)
+    monkeypatch.setattr(
+        "phmap.backends.runner.hidden_process_options", lambda: {"creationflags": 123},
+    )
+    assert CommandRunner.probe_version(sys.executable).output == "APBS 3.4.1"
+    assert calls[0]["creationflags"] == 123
 
 
 def test_modern_pdb2pqr_command_is_explicit(tmp_path: Path) -> None:

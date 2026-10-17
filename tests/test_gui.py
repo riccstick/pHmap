@@ -7,8 +7,9 @@ import time
 from pathlib import Path
 
 import pytest
+from fake_tools import fake_tools as _fake_tools
+from fake_tools import tool as _executable
 from fastapi.testclient import TestClient
-from test_workflow import _executable, _fake_tools
 
 from phmap.cli import main
 from phmap.gui.app import create_app
@@ -49,6 +50,13 @@ def _wait(client: TestClient, run_id: str, expected: set[str]) -> dict:
             return data
         time.sleep(0.05)
     pytest.fail(f"Run never reached {expected}: {data}")
+
+
+def test_gui_loads_the_progress_controller_before_the_page_script(client: TestClient) -> None:
+    page = client.get("/").text
+    assert page.index("/static/run-selection.js") < page.index("/static/app.js")
+    assert client.get("/static/run-selection.js").status_code == 200
+    assert client.get("/static/app.js").status_code == 200
 
 
 def test_gui_upload_validation_run_history_and_downloads(client: TestClient) -> None:
@@ -173,6 +181,8 @@ def test_cancel_active_and_queued_jobs_preserves_artifacts(
     manifest = json.loads((tmp_path / "runs" / first / "manifest.json").read_text())
     assert manifest["status"] == "cancelled"
     assert manifest["tasks"][0]["status"] == "cancelled"
+    assert manifest["tasks"][0]["stages"][-1]["name"] == "apbs"
+    assert manifest["tasks"][0]["stages"][-1]["status"] == "cancelled"
 
 
 def test_queue_restart_marks_abandoned_job_interrupted(tmp_path: Path) -> None:

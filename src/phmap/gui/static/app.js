@@ -6,12 +6,24 @@ const terminal = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const stageNames = { pdb2pqr: "Preparing protonation", apbs: "Calculating potential", pymol: "Rendering surface" };
 let proteins = [];
 let selected = null;
-let stream = null;
 let toolsReady = false;
 let busy = false;
-let refreshTimer = null;
 let lastLogPaths = "";
 let selectedStatus = null;
+const selection = new RunSelection({
+  load: (runId, options) => api(`/api/runs/${encodeURIComponent(runId)}`, options),
+  terminal,
+  onUpdate: (run, progress) => {
+    renderRun(run);
+    if (progress) {
+      refreshHistory();
+      if ($("logs-details").open && $("log-select").value) loadLog();
+    }
+  },
+  onError: () => {
+    $("active-stage").textContent = "Connection lost. Keep the local GUI server running, then refresh.";
+  },
+});
 
 function node(tag, text, className) {
   const element = document.createElement(tag);
@@ -304,8 +316,6 @@ function renderRun(run) {
 }
 
 async function selectRun(runId) {
-  if (stream) stream.close();
-  if (refreshTimer) clearTimeout(refreshTimer);
   selected = runId;
   selectedStatus = null;
   lastLogPaths = "";
@@ -314,29 +324,7 @@ async function selectRun(runId) {
   document.querySelectorAll(".history-item").forEach((button) => {
     button.classList.toggle("selected", button.dataset.runId === runId);
   });
-  const run = await api(`/api/runs/${encodeURIComponent(runId)}`);
-  renderRun(run);
-  if (terminal.has(run.status)) return;
-  stream = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
-  stream.addEventListener("progress", (event) => {
-    const data = JSON.parse(event.data);
-    renderRun(data);
-    refreshHistory();
-    if ($("logs-details").open && $("log-select").value) loadLog();
-    if (terminal.has(data.status)) { stream.close(); stream = null; }
-  });
-  stream.onerror = () => {
-    if (selected !== runId) return;
-    // EventSource reconnects itself. A one-shot fetch also reconciles a terminal
-    // state if the connection closes between the last write and the final event.
-    refreshTimer = setTimeout(async () => {
-      try {
-        const current = await api(`/api/runs/${encodeURIComponent(runId)}`);
-        renderRun(current);
-        if (terminal.has(current.status) && stream) { stream.close(); stream = null; }
-      } catch (error) { $("active-stage").textContent = "Connection lost. Keep the local GUI server running, then refresh."; }
-    }, 1500);
-  };
+  await selection.select(runId);
 }
 
 async function loadLog() {
@@ -380,8 +368,7 @@ $("cancel").onclick = async () => {
   } catch (error) { message(error.message, true); $("cancel").disabled = false; }
 };
 $("new-run").onclick = () => {
-  if (stream) { stream.close(); stream = null; }
-  if (refreshTimer) clearTimeout(refreshTimer);
+  selection.close();
   selected = null;
   selectedStatus = null;
   $("run-detail").hidden = true;
@@ -394,7 +381,7 @@ const logTimer = setInterval(() => {
   if (selected && !terminal.has(selectedStatus) && $("logs-details").open) loadLog();
 }, 2000);
 window.addEventListener("pagehide", () => {
-  if (stream) stream.close();
+  selection.close();
   clearInterval(logTimer);
 });
 checkTools();

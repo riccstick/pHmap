@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
@@ -16,33 +15,18 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from phmap.configuration import WorkflowOptions
 from phmap.errors import ConfigurationError
-from phmap.manifest import utc_now
+from phmap.json_state import read_json, write_json
+from phmap.manifest import finish_task_state, utc_now
 from phmap.models import RunInputs
 from phmap.processes import hidden_process_options, terminate_tree
-from phmap.workflow import WorkflowOptions
 from phmap.workspace import default_run_id
 
 from .locking import LocalLock
 
 TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
-
-
-def read_json(path: Path) -> dict[str, Any]:
-    """Read atomically written state, tolerating an absent or damaged old run."""
-
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def write_json(path: Path, data: dict[str, Any]) -> None:
-    temporary = path.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
 
 
 def build_worker_argv(inputs: RunInputs, options: WorkflowOptions) -> list[str]:
@@ -179,6 +163,7 @@ class JobManager:
                 with self._condition:
                     self._active = None
                     self._process = None
+                    self._cancelled.discard(run_id)
 
     def _execute(self, run_id: str) -> None:
         with (
@@ -231,8 +216,7 @@ class JobManager:
             manifest.update(status=status, error=error, finished_at=utc_now(), updated_at=utc_now())
             for task in manifest.get("tasks", []):
                 if task.get("status") == "running":
-                    task.update(status=status, error=error, finished_at=utc_now())
-                    task.pop("current_stage", None)
+                    finish_task_state(task, status, error=error)
             write_json(path, manifest)
 
     def cancel(self, run_id: str) -> None:
@@ -242,8 +226,12 @@ class JobManager:
                 raise ConfigurationError("Only runs started in this GUI can be cancelled")
             if record["status"] in TERMINAL:
                 return
-            self._cancelled.add(run_id)
-            record["status"] = "cancelling" if run_id == self._active else "cancelled"
+            if run_id == self._active:
+                self._cancelled.add(run_id)
+                record["status"] = "cancelling"
+            else:
+                self._queue.remove(run_id)
+                record.update(status="cancelled", finished_at=utc_now())
             self._save(run_id)
 
     def close(self) -> None:
@@ -265,23 +253,47 @@ class JobManager:
             raise FileNotFoundError("Run is outside the configured directory")
         return path
 
-    def snapshot(self, run_id: str) -> dict[str, Any]:
+    def _read_state(self, run_id: str) -> tuple[Path, dict[str, Any], dict[str, Any]]:
         root = self.run_directory(run_id)
         with self._condition:
             record = self._jobs.get(run_id, {}).copy()
         manifest = read_json(root / "manifest.json")
         if not record and not manifest:
             raise FileNotFoundError("Run not found")
+        return root, record, manifest
+
+    @staticmethod
+    def _summary(
+        run_id: str, record: dict[str, Any], manifest: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Read sidebar information without discovering artifacts or building cells."""
+
+        configuration = manifest.get("configuration") or record.get("configuration", {})
+        proteins = configuration.get("proteins", [])
+        status = record.get("status") or manifest.get("status", "unknown")
+        # A CLI run can finish before the queue thread updates its own record.
+        if status == "running" and manifest.get("status") in TERMINAL:
+            status = manifest["status"]
+        return {
+            "run_id": run_id, "name": record.get("name") or " / ".join(
+                protein["label"] for protein in proteins
+            ),
+            "status": status, "source": "gui" if record else "cli",
+            "created_at": record.get("created_at") or manifest.get("created_at"),
+            "completed": sum(
+                task.get("status") == "completed" for task in manifest.get("tasks", [])
+            ),
+            "total": len(proteins) * len(configuration.get("ph_values", [])),
+        }
+
+    def snapshot(self, run_id: str) -> dict[str, Any]:
+        root, record, manifest = self._read_state(run_id)
+        summary = self._summary(run_id, record, manifest)
         configuration = manifest.get("configuration") or record.get("configuration", {})
         proteins = configuration.get("proteins", [])
         ph_values = configuration.get("ph_values", [])
         tasks = manifest.get("tasks", [])
         task_map = {(task["protein_id"], task["ph"]): task for task in tasks}
-        completed = sum(task.get("status") == "completed" for task in tasks)
-        status = record.get("status") or manifest.get("status", "unknown")
-        # A CLI run can finish before the queue thread updates its own record.
-        if status == "running" and manifest.get("status") in TERMINAL:
-            status = manifest["status"]
         cells = []
         for protein in proteins:
             for ph in ph_values:
@@ -299,21 +311,16 @@ class JobManager:
         tiles = []
         if (root / "renders").is_dir():
             tiles = [str(p.relative_to(root)) for p in sorted((root / "renders").rglob("*.png"))]
-        total = len(proteins) * len(ph_values)
+        total = summary["total"]
         return {
-            "run_id": run_id, "name": record.get("name") or " / ".join(
-                protein["label"] for protein in proteins
-            ),
-            "status": status, "source": "gui" if record else "cli",
-            "created_at": record.get("created_at") or manifest.get("created_at"),
+            **summary,
             "updated_at": manifest.get("updated_at") or record.get("updated_at"),
             "directory": str(root), "configuration": configuration,
-            "completed": completed, "total": total,
-            "progress": round(100 * completed / total) if total else 0,
+            "progress": round(100 * summary["completed"] / total) if total else 0,
             "cells": cells, "figure": figure, "tiles": tiles, "logs": logs,
             "manifest": "manifest.json" if manifest else None,
             "error": record.get("error") or manifest.get("error"),
-            "can_cancel": bool(record) and status not in TERMINAL,
+            "can_cancel": bool(record) and summary["status"] not in TERMINAL,
             "worker_log": self.log_tail(self.records / f"{run_id}.stderr.log") if record else "",
         }
 
@@ -329,12 +336,11 @@ class JobManager:
         results = []
         for run_id in run_ids:
             try:
-                data = self.snapshot(run_id)
+                _, record, manifest = self._read_state(run_id)
+                data = self._summary(run_id, record, manifest)
             except (FileNotFoundError, KeyError, TypeError):
                 continue
-            results.append({key: data[key] for key in (
-                "run_id", "name", "status", "source", "created_at", "completed", "total"
-            )})
+            results.append(data)
         return sorted(results, key=lambda item: item.get("created_at") or "", reverse=True)
 
     @staticmethod

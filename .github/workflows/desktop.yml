@@ -20,9 +20,29 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
+  changes:
+    name: Classify changed files
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check whether desktop CI is needed
+        id: classify
+        run: python3 scripts/ci_changes.py
+
   build:
     name: ${{ matrix.target }}
-    runs-on: ${{ matrix.runner }}
+    needs: changes
+    # A failed classifier falls back to full builds, not successful skipped checks.
+    if: ${{ !cancelled() }}
+    # Keep all four required check names on docs-only PRs without starting native
+    # runners or installing the scientific environment.
+    runs-on: ${{ needs.changes.outputs.docs_only == 'true' && 'ubuntu-latest' || matrix.runner }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -37,31 +57,41 @@ jobs:
           - target: linux-x64
             runner: ubuntu-22.04
     steps:
+      - name: Documentation-only update
+        if: needs.changes.outputs.docs_only == 'true'
+        run: echo "Documentation-only update. See the Documentation site workflow for the website build."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           persist-credentials: false
       - name: Prepare Linux graphical test display
-        if: runner.os == 'Linux'
+        if: needs.changes.outputs.docs_only != 'true' && runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb xauth
       - uses: prefix-dev/setup-pixi@9dabb60412d3d2d967a8d682f7ce01317af40514 # v0.11.0
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           pixi-version: v0.75.0
           locked: true
           cache: true
       - name: Unit and integration tests
+        if: needs.changes.outputs.docs_only != 'true'
         run: pixi run --locked test
       - name: Lint source
+        if: needs.changes.outputs.docs_only != 'true'
         run: pixi run --locked lint
       - name: Type check source
+        if: needs.changes.outputs.docs_only != 'true'
         run: pixi run --locked typecheck
       - name: Scientific toolchain preflight
+        if: needs.changes.outputs.docs_only != 'true'
         run: pixi run --locked doctor
       - name: Real scientific smoke run
+        if: needs.changes.outputs.docs_only != 'true'
         run: pixi run --locked smoke
       - name: Verify release tag matches version
-        if: startsWith(github.ref, 'refs/tags/')
+        if: needs.changes.outputs.docs_only != 'true' && startsWith(github.ref, 'refs/tags/')
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         shell: pixi run python {0}
@@ -72,21 +102,23 @@ jobs:
           version = tomllib.loads(Path('pyproject.toml').read_text())['project']['version']
           assert os.environ['RELEASE_TAG'] == f'v{version}', 'Tag must match pyproject.toml version'
       - name: Build native launcher and archive
+        if: needs.changes.outputs.docs_only != 'true'
         run: pixi run --locked build-app
       - name: Check frozen launcher, setup, assets, and offline restart
-        if: runner.os != 'Linux'
+        if: needs.changes.outputs.docs_only != 'true' && runner.os != 'Linux'
         run: pixi run --locked python scripts/check_desktop.py
       - name: Check Linux frozen launcher and native window
-        if: runner.os == 'Linux'
+        if: needs.changes.outputs.docs_only != 'true' && runner.os == 'Linux'
         run: xvfb-run --auto-servernum pixi run --locked python scripts/check_desktop.py
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           name: desktop-${{ matrix.target }}
           path: dist/release/*
           if-no-files-found: error
           retention-days: 14
       - name: Preserve diagnostic logs
-        if: failure()
+        if: failure() && needs.changes.outputs.docs_only != 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: diagnostics-${{ matrix.target }}
@@ -97,8 +129,8 @@ jobs:
 
   release:
     name: Prepare GitHub release
-    needs: build
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: [changes, build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && needs.changes.outputs.docs_only == 'false'
     runs-on: ubuntu-22.04
     permissions:
       contents: write

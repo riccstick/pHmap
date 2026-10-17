@@ -10,11 +10,12 @@ from pathlib import Path
 
 from phmap import __version__
 from phmap.backends import BackendError as ScientificBackendError
+from phmap.configuration import WorkflowOptions
 from phmap.doctor import run_doctor
 from phmap.errors import PHMapError
 from phmap.inputs import validate_run_inputs
 from phmap.models import InputValidationError, RunInputs
-from phmap.workflow import LocalWorkflow, WorkflowOptions
+from phmap.workflow import LocalWorkflow
 
 
 def _add_input_arguments(parser: argparse.ArgumentParser, *, include_run: bool) -> None:

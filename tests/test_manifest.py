@@ -2,6 +2,8 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from phmap.manifest import RunManifest, sha256_file
 
 
@@ -29,4 +31,16 @@ def test_manifest_records_inputs_tasks_and_outputs(tmp_path: Path) -> None:
     assert data["inputs"][0]["sha256"] == sha256_file(staged)
     assert data["tasks"][0]["stages"][0]["name"] == "pdb2pqr"
     assert data["outputs"][0]["sha256"] == sha256_file(output)
+
+
+@pytest.mark.parametrize("status", ["failed", "cancelled", "interrupted"])
+def test_finishing_a_task_also_finishes_its_active_stage(tmp_path: Path, status: str) -> None:
+    manifest = RunManifest(tmp_path / "manifest.json", "run")
+    task = manifest.start_task("wt@5", "wt", Decimal("5"))
+    manifest.start_stage(task, "apbs")
+    manifest.finish_task(task, status, error="Calculation stopped")
+    assert task["status"] == status
+    assert "current_stage" not in task
+    assert task["stages"][0]["status"] == status
+    assert task["stages"][0]["error"] == "Calculation stopped"
 

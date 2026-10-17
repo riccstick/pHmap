@@ -12,7 +12,6 @@ import json
 import os
 import queue
 import secrets
-import shutil
 import socket
 import subprocess
 import sys
@@ -25,7 +24,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from phmap import __version__
+from phmap.desktop_runtime import DesktopRuntime
 from phmap.errors import ConfigurationError
 from phmap.gui.locking import LocalLock
 from phmap.processes import hidden_process_options, terminate_tree
@@ -149,7 +148,9 @@ class DesktopService:
         self.reused = False
         self._cancelled = threading.Event()
 
-    def _spawn(self, argv: Sequence[str], env: dict[str, str], cwd: Path) -> None:
+    def _spawn(
+        self, argv: Sequence[str], env: dict[str, str], cwd: Path,
+    ) -> subprocess.Popen[bytes]:
         if self._cancelled.is_set():
             raise ConfigurationError("Startup cancelled")
         with self.log_path.open("ab") as log:
@@ -168,93 +169,13 @@ class DesktopService:
         if self._cancelled.is_set():
             terminate_tree(self.process, force=True)
             raise ConfigurationError("Startup cancelled")
+        return self.process
 
     def _runtime(self, env: dict[str, str]) -> tuple[Path, Path, dict[str, str]]:
-        if self.project:
-            root, environment = self.project, "default"
-            pixi = shutil.which("pixi")
-            for candidate in (Path("/opt/homebrew/bin/pixi"), Path.home() / ".pixi/bin/pixi"):
-                if not pixi and candidate.is_file():
-                    pixi = str(candidate)
-        else:
-            payload = resources() / "runtime"
-            identity = (resources() / "runtime-id.txt").read_text().strip()
-            if not identity or any(c not in "0123456789abcdef" for c in identity):
-                raise ConfigurationError("The release's runtime identity is invalid")
-            root = self.data_dir / "runtimes" / f"{__version__}-{identity[:16]}"
-            if not root.exists():
-                self.progress("Preparing your local pHmap installation…")
-                root.parent.mkdir(parents=True, exist_ok=True)
-                staging = root.with_name(root.name + ".staging")
-                # Recover from interrupted copying; never remove installed runtimes.
-                staging.mkdir(exist_ok=True)
-                shutil.copytree(payload, staging, dirs_exist_ok=True)
-                staging.rename(root)
-            environment = "runtime"
-            pixi = str(resources() / "tools" / ("pixi.exe" if os.name == "nt" else "pixi"))
-        prefix = root / ".pixi" / "envs" / environment
-        python = prefix / ("python.exe" if os.name == "nt" else "bin/python")
-        installed = root / ".desktop-ready"
-        if not self.project and not installed.exists():
-            self.progress("First-time setup: downloading Python, PDB2PQR, APBS and PyMOL…")
-            assert pixi is not None
-            self._spawn(
-                [
-                    pixi,
-                    "install",
-                    "--locked",
-                    "--environment",
-                    environment,
-                    "--manifest-path",
-                    str(root / "pixi.toml"),
-                ],
-                env,
-                root,
-            )
-            assert self.process is not None
-            if self.process.wait() != 0:
-                raise ConfigurationError(f"Environment setup failed. See {self.log_path}")
-            installed.touch()
-        if not python.is_file():
-            raise ConfigurationError(
-                "The scientific environment is missing. Run the project setup."
-            )
-        if pixi:
-            # --as-is forbids installs or lock changes and works offline after setup.
-            activated = subprocess.run(
-                [
-                    pixi,
-                    "shell-hook",
-                    "--json",
-                    "--as-is",
-                    "--environment",
-                    environment,
-                    "--manifest-path",
-                    str(root / "pixi.toml"),
-                ],
-                cwd=root,
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=30,
-                **hidden_process_options(),
-            )
-            if activated.returncode:
-                with self.log_path.open("a", encoding="utf-8") as log:
-                    log.write(activated.stderr)
-                raise ConfigurationError(f"Environment activation failed. See {self.log_path}")
-            variables = json.loads(activated.stdout)["environment_variables"]
-            env.update({key: value for key, value in variables.items() if isinstance(value, str)})
-        else:
-            paths = [prefix / "bin"]
-            if os.name == "nt":
-                paths = [prefix, prefix / "Library/bin", prefix / "Scripts"]
-            env["PATH"] = (
-                os.pathsep.join(str(path) for path in paths) + os.pathsep + env.get("PATH", "")
-            )
-        env["PYTHONPATH"] = str(root / "src")
-        return root, python, env
+        return DesktopRuntime(
+            data_dir=self.data_dir, resources=resources(), log_path=self.log_path,
+            spawn=self._spawn, progress=self.progress, project=self.project,
+        ).prepare(env)
 
     def start(self) -> str:
         self.runs_dir.mkdir(parents=True, exist_ok=True)

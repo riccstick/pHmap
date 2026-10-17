@@ -19,6 +19,13 @@ _APBS_FILE_DIRECTIVE = re.compile(
 )
 
 
+def validate_force_field(force_field: str) -> None:
+    """Check force-field syntax without requiring input or output files."""
+
+    if not isinstance(force_field, str) or not _FORCE_FIELD_PATTERN.fullmatch(force_field):
+        raise BackendValidationError("PDB2PQR force_field contains unsupported characters")
+
+
 def _path(value: str | os.PathLike[str]) -> Path:
     return Path(value)
 
@@ -100,10 +107,7 @@ class Pdb2pqrRequest:
         if self.work_dir is not None:
             object.__setattr__(self, "work_dir", _path(self.work_dir))
         object.__setattr__(self, "ph", _ph_decimal(self.ph))
-        if not _FORCE_FIELD_PATTERN.fullmatch(self.force_field):
-            raise BackendValidationError(
-                "PDB2PQR force_field contains unsupported characters"
-            )
+        validate_force_field(self.force_field)
         destinations = {
             self.pdb_path.resolve(),
             self.pqr_path.resolve(),

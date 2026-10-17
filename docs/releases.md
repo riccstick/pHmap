@@ -197,22 +197,38 @@ provides both continuous integration and release builds:
 
 | Event | Checks and native builds | Release creation |
 | --- | --- | --- |
-| PR opened, updated with new commits, reopened, or marked ready for review | All four platforms | None |
-| Push to `main` or `master`, including after merging | All four platforms | None |
-| Merge queue requests checks | All four platforms | None |
+| PR opened, updated with new commits, reopened, or marked ready for review | All four platforms for application changes; lightweight checks for docs-only changes | None |
+| Push to `main` or `master`, including after merging | All four platforms for application changes; lightweight checks for docs-only changes | None |
+| Merge queue requests checks | All four platforms for application changes; lightweight checks for docs-only changes | None |
 | Push of a `v*` version tag | All four platforms and matching version check | Draft only after all builds pass |
 | Manual **Run workflow** | All four platforms | None |
 
-Each platform job runs the unit and integration suite before building. Different
-commits use different concurrency groups, so a newer push does not cancel an
-older commit's checks. A push containing several commits tests the resulting
-tip/PR merge snapshot, not every intermediate historical commit separately;
+Documentation-only changes include `docs/**` (including stories and images),
+`zensical.toml`, the documentation workflow, and the root `README.md`,
+`CHANGELOG.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `SECURITY.md` files.
+These updates build the website through the separate **Documentation site**
+workflow. The four desktop status checks complete as lightweight Ubuntu jobs,
+without installing scientific tools, running native tests, or building archives.
+Their existing names remain available to branch protection.
+
+Any other changed file, including Python code, tests, examples, dependency locks,
+desktop build scripts, or the desktop workflow, triggers the full native matrix.
+The classifier checks the complete PR diff, the complete pushed commit range, or
+the merge-group diff. Renaming a code file into `docs/` still triggers full CI.
+Missing history, an unverified diff, or deletion of the packaging-required
+`README.md` also triggers full CI. Version tags and manual runs always run the
+full pipeline, even if the latest change only touched documentation.
+
+For full CI, each platform job runs the unit and integration suite before
+building. Different commits use different concurrency groups, so a newer push
+does not cancel an older commit's checks. A push containing several commits
+tests the resulting tip/PR merge snapshot, not every intermediate historical commit separately;
 that is how GitHub's [workflow events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
 work. PR checks use GitHub's proposed merge with the base branch, and merge
-queue checks use the queued merge group. No path filters or draft-PR exclusions
-skip tests for particular source changes.
+queue checks use the queued merge group. Source changes are always tested;
+documentation-only changes use the lightweight checks described above.
 
-The workflow:
+The full native workflow:
 
 1. Installs the locked scientific environment on all four native runners.
 2. Runs unit/integration tests, lint, type checks, and dependency preflight.
@@ -253,6 +269,11 @@ run reports its checks, configure a repository ruleset or branch protection for
 - `macos-x64`
 - `windows-x64`
 - `linux-x64`
+
+These names also report success for documentation-only updates using the
+lightweight path above. The workflow remains triggered for those PRs so required
+checks are not left pending by a workflow-level path filter. You can also require
+**Build documentation** to enforce a successful website build.
 
 Use **Require status checks to pass before merging** and require the branch to
 be up to date, or use a merge queue. These repository settings enforce the
