@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="880" viewBox="0 0 1600 880" role="img" aria-labelledby="title description">
+  <title id="title">The local pHmap calculation workflow</title>
+  <desc id="description">Protein structures, pH values, and an optional camera view are passed through PDB2PQR with PROPKA, APBS, PyMOL, and the Python compositor. Scientific files, images, logs, and the run manifest are retained on the user's computer.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#789185"/>
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; }
+      .label { font-size: 18px; font-weight: 700; letter-spacing: 2px; fill: #537767; }
+      .tool { font-size: 30px; font-weight: 700; fill: #173d32; }
+      .tool-long { font-size: 26px; }
+      .body { font-size: 23px; fill: #536b60; }
+      .output { font-size: 20px; font-weight: 700; fill: #285e4e; }
+      .card { fill: #ffffff; stroke: #d9e4db; stroke-width: 2; }
+      .step { font-size: 20px; font-weight: 700; fill: #285e4e; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="880" fill="#f4f6f2"/>
+  <rect x="0" y="0" width="1600" height="14" fill="#285e4e"/>
+  <text x="80" y="84" class="label">pHmap 2.0 / THE CALCULATION WORKFLOW</text>
+  <rect x="1200" y="52" width="320" height="46" rx="23" fill="#e2ece1"/>
+  <circle cx="1227" cy="75" r="6" fill="#537f61"/>
+  <text x="1246" y="82" font-size="17" font-weight="700" fill="#345e47">RUNS ON YOUR COMPUTER</text>
+  <text x="80" y="168" font-size="58" font-weight="700" letter-spacing="-1.5" fill="#153c33">From structure to surface.</text>
+  <text x="80" y="212" font-size="26" fill="#60786c">One scientific workflow for the desktop app and command line.</text>
+
+  <rect x="80" y="256" width="1440" height="92" rx="16" fill="#e8eee5"/>
+  <text x="110" y="292" class="label">INPUTS</text>
+  <text x="110" y="324" font-size="23" fill="#284d3d">Protein structures (PDB)</text>
+  <path d="M 500 278 V 326 M 980 278 V 326" stroke="#c9d7c9" stroke-width="2"/>
+  <text x="536" y="292" class="label">pH SERIES</text>
+  <text x="536" y="324" font-size="23" fill="#284d3d">Range or explicit values</text>
+  <text x="1016" y="292" class="label">OPTIONAL VIEW</text>
+  <text x="1016" y="324" font-size="23" fill="#284d3d">Shared PyMOL camera</text>
+
+  <path d="M 248 348 V 389" stroke="#789185" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <rect x="80" y="400" width="336" height="254" rx="18" class="card"/>
+  <circle cx="122" cy="443" r="22" fill="#e9f1e5"/>
+  <text x="110" y="450" class="step">01</text>
+  <text x="159" y="450" class="label">PREPARE</text>
+  <text x="108" y="504" class="tool tool-long">PDB2PQR / PROPKA</text>
+  <text x="108" y="546" class="body">Assign protonation states,</text>
+  <text x="108" y="578" class="body">atomic charges and radii.</text>
+  <text x="108" y="625" class="output">PQR models</text>
+
+  <path d="M 420 527 H 444" stroke="#789185" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <rect x="448" y="400" width="336" height="254" rx="18" class="card"/>
+  <circle cx="490" cy="443" r="22" fill="#e9f1e5"/>
+  <text x="478" y="450" class="step">02</text>
+  <text x="527" y="450" class="label">CALCULATE</text>
+  <text x="476" y="504" class="tool">APBS</text>
+  <text x="476" y="546" class="body">Calculate electrostatic</text>
+  <text x="476" y="578" class="body">potential on a 3D grid.</text>
+  <text x="476" y="625" class="output">DX potential maps</text>
+
+  <path d="M 788 527 H 812" stroke="#789185" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <rect x="816" y="400" width="336" height="254" rx="18" class="card"/>
+  <circle cx="858" cy="443" r="22" fill="#e9f1e5"/>
+  <text x="846" y="450" class="step">03</text>
+  <text x="895" y="450" class="label">RENDER</text>
+  <text x="844" y="504" class="tool">PyMOL</text>
+  <text x="844" y="546" class="body">Map the potential onto</text>
+  <text x="844" y="578" class="body">the molecular surface.</text>
+  <text x="844" y="625" class="output">PNG surface panels</text>
+
+  <path d="M 1156 527 H 1180" stroke="#789185" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <rect x="1184" y="400" width="336" height="254" rx="18" class="card"/>
+  <circle cx="1226" cy="443" r="22" fill="#e9f1e5"/>
+  <text x="1214" y="450" class="step">04</text>
+  <text x="1263" y="450" class="label">COMPOSE</text>
+  <text x="1212" y="504" class="tool">Python / Pillow</text>
+  <text x="1212" y="546" class="body">Arrange proteins and pH</text>
+  <text x="1212" y="578" class="body">values in an ordered grid.</text>
+  <text x="1212" y="625" class="output">Final pHmap figure</text>
+
+  <rect x="80" y="704" width="1440" height="110" rx="16" fill="#153c33"/>
+  <text x="110" y="747" font-size="22" font-weight="700" fill="#ffffff">Saved together in an isolated run directory</text>
+  <text x="110" y="785" font-size="23" fill="#c2d4c9">Scientific files, rendered panels, logs, settings, tool versions, and manifest.json</text>
+</svg>

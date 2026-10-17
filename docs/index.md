@@ -30,3 +30,6 @@ intermediate scientific files, output, and a provenance manifest together.
 
 The [feature roadmap](feature-roadmap.md) describes current capabilities and
 planned additions.
+
+Read [the pHmap 2.0 story](publish/phmap-2-0.md) for the background on the Python
+rewrite, the local desktop workflow, and what comes next.
