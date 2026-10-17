@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-import json
-import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+
+from phmap.json_state import write_json
 
 
 def utc_now() -> str:
@@ -28,10 +28,20 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _json_default(value: object) -> str:
-    if isinstance(value, (Path, Decimal)):
-        return str(value)
-    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+def finish_task_state(
+    task: dict[str, Any], status: str, *, error: str | None = None,
+) -> None:
+    """Apply terminal state consistently, including an unfinished active stage."""
+
+    task.update(status=status, finished_at=utc_now())
+    task.pop("current_stage", None)
+    if error is not None:
+        task["error"] = error
+    for stage in task.get("stages", []):
+        if stage.get("status") == "running":
+            stage.update(status=status, finished_at=task["finished_at"])
+            if error is not None:
+                stage["error"] = error
 
 
 @dataclass(slots=True)
@@ -61,10 +71,7 @@ class RunManifest:
         """Atomically write the current manifest."""
 
         self.data["updated_at"] = utc_now()
-        temporary = self.path.with_suffix(".json.tmp")
-        payload = json.dumps(self.data, indent=2, sort_keys=True, default=_json_default) + "\n"
-        temporary.write_text(payload, encoding="utf-8")
-        os.replace(temporary, self.path)
+        write_json(self.path, self.data, sort_keys=True)
 
     def set_status(self, status: str, *, error: str | None = None) -> None:
         self.data["status"] = status
@@ -108,21 +115,25 @@ class RunManifest:
         return task
 
     def record_stage(self, task: dict[str, Any], stage: dict[str, Any]) -> None:
-        task["stages"].append(stage)
+        if (
+            task["stages"]
+            and task["stages"][-1].get("name") == stage["name"]
+            and task["stages"][-1].get("status") == "running"
+        ):
+            task["stages"][-1].update(stage)
+        else:
+            task["stages"].append(stage)
         self.write()
 
     def start_stage(self, task: dict[str, Any], name: str) -> None:
         """Expose the active stage to CLI and GUI progress readers."""
 
         task["current_stage"] = name
+        task["stages"].append({"name": name, "status": "running", "started_at": utc_now()})
         self.write()
 
     def finish_task(self, task: dict[str, Any], status: str, *, error: str | None = None) -> None:
-        task["status"] = status
-        task.pop("current_stage", None)
-        task["finished_at"] = utc_now()
-        if error is not None:
-            task["error"] = error
+        finish_task_state(task, status, error=error)
         self.write()
 
     def record_output(self, role: str, path: Path) -> None:

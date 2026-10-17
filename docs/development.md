@@ -131,6 +131,27 @@ client; no Node build or CDN is required. The client submits multipart uploads
 and validated settings, then receives manifest snapshots through Server-Sent
 Events. GUI and CLI use the same validation models and scientific workflow.
 
+Core execution and presentation settings live in `phmap.configuration`; both
+interfaces validate them before creating a run or launching scientific tools.
+The browser keeps its own upload limits and form defaults. Stage records are
+created when work starts and finalized on success, failure, cancellation, or
+interruption, including timeout and invalid-artifact failures.
+
+The DOM-independent progress controller lives in `static/run-selection.js`.
+Its regression checks cover rapid selection changes, stale responses/events,
+and reconnect handling. With Node.js installed, `pytest` runs these checks too;
+Node.js is optional for local Python-only development and is not needed to build
+or run pHmap. Run just the controller checks with:
+
+```console
+node tests/frontend/run-selection.mjs
+```
+
+History reads lightweight summaries, while detailed run views discover images
+and logs only when requested. Desktop environment installation and activation
+live in `phmap.desktop_runtime`, separately from the launcher window and local
+service lifecycle. Its tests simulate setup without downloading a toolchain.
+
 `JobManager` runs a single isolated `python -m phmap run` worker at a time. It
 keeps queue metadata and uploaded input copies below `runs/.gui/`. Each worker
 creates its normal `runs/<run-id>/` workspace. Completed CLI manifests are read
@@ -177,8 +198,14 @@ uvx --from "zensical==0.0.69" zensical build --clean --strict
 ```
 
 The generated `site/` directory is local build output and is not committed.
-The workflow builds every pull request and publishes successful pushes to
-`main` or `master` through GitHub Pages.
+The workflow builds every pull request and merge queue group, and publishes
+successful pushes to `main` or `master` through GitHub Pages.
+
+Documentation-only updates skip the scientific tests and desktop builds in the
+separate desktop workflow. Its four required check names complete using
+lightweight Ubuntu jobs. Application, test, build, and dependency changes still
+run full native CI; version tags and manual desktop workflow runs always do too.
+See the [release guide](releases.md#publish-through-github) for the exact rules.
 
 ## Scientific baseline policy
 

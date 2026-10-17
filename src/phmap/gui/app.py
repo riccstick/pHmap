@@ -25,13 +25,11 @@ from starlette.datastructures import UploadFile
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from phmap import __version__
-from phmap.backends import PyMOLRenderOptions
-from phmap.compose import CompositionSettings
+from phmap.configuration import WorkflowOptions
 from phmap.doctor import run_doctor
 from phmap.errors import ConfigurationError
 from phmap.inputs import validate_run_inputs
 from phmap.models import InputValidationError, RunInputs
-from phmap.workflow import WorkflowOptions
 
 from .jobs import TERMINAL, JobManager
 
@@ -61,15 +59,6 @@ class RunSettings(BaseModel):
     ray_trace: bool = True
 
     def options(self, runs_dir: Path) -> WorkflowOptions:
-        # Validate presentation settings before queuing an expensive calculation.
-        CompositionSettings(
-            background=self.background, foreground=self.foreground,
-            ramp_colors=self.ramp_colors, potential_level=self.level,
-        )
-        PyMOLRenderOptions(
-            width=self.size, height=self.size, dpi=self.dpi, level=self.level,
-            background=self.background or "white", ramp_colors=self.ramp_colors,
-        )
         return WorkflowOptions(
             runs_dir=runs_dir, size=self.size, dpi=self.dpi, potential_level=self.level,
             ramp_colors=self.ramp_colors, background=self.background,
@@ -273,12 +262,12 @@ def create_app(
 
     @app.get("/api/runs/{run_id}/events")
     async def events(run_id: str, request: Request) -> StreamingResponse:
-        detail(run_id)
+        await asyncio.to_thread(detail, run_id)
 
         async def updates() -> AsyncIterator[str]:
             previous = ""
             while not await request.is_disconnected():
-                data = jobs.snapshot(run_id)
+                data = await asyncio.to_thread(jobs.snapshot, run_id)
                 payload = json.dumps(data, separators=(",", ":"))
                 if payload != previous:
                     yield f"event: progress\ndata: {payload}\n\n"

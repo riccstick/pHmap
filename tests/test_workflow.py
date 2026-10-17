@@ -4,100 +4,17 @@ import json
 from pathlib import Path
 
 import pytest
-from fake_executable import executable
+from fake_tools import fake_tools as _fake_tools
 from PIL import Image
 
-from phmap.backends import CommandExecutionError
+from phmap.backends import (
+    ArtifactError,
+    CommandExecutionError,
+    CommandStartError,
+    CommandTimeoutError,
+)
 from phmap.inputs import validate_run_inputs
 from phmap.workflow import LocalWorkflow, WorkflowOptions
-
-
-def _executable(tmp_path: Path, name: str, source: str) -> Path:
-    return executable(tmp_path / "tools", name, source)
-
-
-def _fake_tools(tmp_path: Path, *, fail_apbs: bool = False) -> tuple[Path, Path, Path]:
-    pdb2pqr = _executable(
-        tmp_path,
-        "pdb2pqr30",
-        r'''
-        import pathlib
-        import sys
-
-        if sys.argv[1:] == ["--version"]:
-            print("pdb2pqr 3.7.1")
-            raise SystemExit(0)
-        args = sys.argv[1:]
-        apbs_input = pathlib.Path(
-            next(arg.split("=", 1)[1] for arg in args if arg.startswith("--apbs-input="))
-        )
-        pqr = pathlib.Path(args[-1])
-        pqr.write_text("ATOM 1 N ALA A 1 0 0 0 -0.3 1.5\n", encoding="utf-8")
-        apbs_input.write_text(str(pathlib.Path(f"{pqr}.dx")), encoding="utf-8")
-        print("prepared", pqr)
-        ''',
-    )
-    apbs_body = (
-        r'''
-        import sys
-        if sys.argv[1:] == ["--version"]:
-            print("APBS 3.4.1")
-            raise SystemExit(0)
-        print("solver failed", file=sys.stderr)
-        raise SystemExit(4)
-        '''
-        if fail_apbs
-        else r'''
-        import pathlib
-        import sys
-
-        if sys.argv[1:] == ["--version"]:
-            print("APBS 3.4.1")
-            raise SystemExit(0)
-        input_path = pathlib.Path(sys.argv[-1])
-        dx = pathlib.Path(input_path.read_text(encoding="utf-8").strip())
-        dx.write_text(
-            "object 1 class gridpositions counts 1 1 2\n"
-            "origin 0 0 0\n"
-            "delta 1 0 0\n"
-            "delta 0 1 0\n"
-            "delta 0 0 1\n"
-            "object 2 class gridconnections counts 1 1 2\n"
-            "object 3 class array type double rank 0 items 2 data follows\n"
-            "-1.0 1.0\n",
-            encoding="utf-8",
-        )
-        print("solved", dx)
-        '''
-    )
-    apbs = _executable(tmp_path, "apbs", apbs_body)
-    pymol = _executable(
-        tmp_path,
-        "pymol",
-        r'''
-        import json
-        import pathlib
-        import re
-        import sys
-        from PIL import Image
-
-        if sys.argv[1:] == ["--version"]:
-            print("PyMOL 3.1.0")
-            raise SystemExit(0)
-        script = pathlib.Path(sys.argv[-1]).read_text(encoding="utf-8")
-        output_match = re.search(
-            r'^cmd\.png\(("(?:\\.|[^"\\])*")', script, re.MULTILINE
-        )
-        assert output_match is not None
-        output = pathlib.Path(json.loads(output_match.group(1)))
-        width = int(re.search(r'width=(\d+)', script).group(1))
-        height = int(re.search(r'height=(\d+)', script).group(1))
-        color = (240, 0, 0, 255) if "ph-5.0" in str(output) else (0, 0, 240, 255)
-        Image.new("RGBA", (width, height), color).save(output)
-        print("rendered", output)
-        ''',
-    )
-    return pdb2pqr, apbs, pymol
 
 
 def _input_pdb(tmp_path: Path) -> Path:
@@ -190,3 +107,54 @@ def test_backend_failure_marks_manifest_and_keeps_logs(tmp_path: Path) -> None:
     assert stderr.is_file()
     assert "solver failed" in stderr.read_text(encoding="utf-8")
     assert not (run_dir / "output" / "pHmap.png").exists()
+
+
+@pytest.mark.parametrize("failure", ["timeout", "startup", "artifact", "unexpected"])
+def test_every_stage_failure_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    pdb = _input_pdb(tmp_path)
+    pdb2pqr, apbs, pymol = _fake_tools(tmp_path)
+    inputs = validate_run_inputs(pdb, ph_values=["5"])
+    run_dir = tmp_path / "runs" / "failed"
+
+    def fail(self, request, *, timeout):  # type: ignore[no-untyped-def]
+        if failure == "timeout":
+            raise CommandTimeoutError(
+                stage="apbs", timeout=timeout,
+                stdout_path=self.runner.log_dir / "apbs.stdout.log",
+                stderr_path=self.runner.log_dir / "apbs.stderr.log",
+            )
+        if failure == "startup":
+            raise CommandStartError("apbs", str(apbs), OSError("Cannot start"))
+        if failure == "artifact":
+            raise ArtifactError(request.dx_path, "OpenDX", "Missing potential")
+        raise ValueError("Unexpected backend error")
+
+    monkeypatch.setattr("phmap.workflow.ApbsBackend.run", fail)
+    with pytest.raises((CommandTimeoutError, CommandStartError, ArtifactError, ValueError)):
+        LocalWorkflow(inputs, WorkflowOptions(
+            output_dir=run_dir, size=64, pdb2pqr_executable=pdb2pqr,
+            apbs_executable=apbs, pymol_executable=pymol,
+        )).run()
+
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    task = manifest["tasks"][0]
+    assert manifest["status"] == task["status"] == "failed"
+    assert "current_stage" not in task
+    assert [stage["name"] for stage in task["stages"]] == ["pdb2pqr", "apbs"]
+    stage = task["stages"][-1]
+    assert stage["status"] == "failed"
+    assert stage["started_at"] <= stage["finished_at"]
+    assert stage["error"] == task["error"]
+    assert stage["error_type"] in {
+        "CommandTimeoutError", "CommandStartError", "ArtifactError", "ValueError",
+    }
+    assert stage["stdout"].endswith("apbs.stdout.log")
+    assert stage["stderr"].endswith("apbs.stderr.log")
+    if failure == "timeout":
+        assert stage["timeout_seconds"] == 1800
+    elif failure == "startup":
+        assert stage["executable"] == str(apbs)
+    elif failure == "artifact":
+        assert stage["artifact"]["reason"] == "Missing potential"

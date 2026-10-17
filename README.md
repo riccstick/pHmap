@@ -149,9 +149,11 @@ environment for the complete supported local toolchain.
 
 The [GitHub Actions workflow](.github/workflows/desktop.yml) runs unit/integration
 tests, lint, type checks, scientific smoke runs, and native builds on PR updates
-and pushes to `main`/`master`. Version tags create a draft release only after all
-four platform jobs pass. See the [release guide](docs/releases.md) for enabling
-required merge checks.
+and pushes to `main`/`master` that change application, test, build, or dependency
+files. Documentation-only updates use lightweight checks and the separate website
+build. Version tags always run the full pipeline and create a draft release only
+after all four platform jobs pass. See the [release guide](docs/releases.md) for
+the change classification and required merge checks.
 
 Available in the current Python application:
 

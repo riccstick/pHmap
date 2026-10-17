@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from phmap.processes import hidden_process_options
+from phmap.versions import version_line
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,22 +44,6 @@ _TOOLS = (
     _ToolCheck("APBS", "apbs", ("--version",), (0, 13)),
     _ToolCheck("PyMOL", "pymol", ("--version",)),
 )
-
-
-def _first_line(stdout: str, stderr: str) -> str | None:
-    combined = "\n".join(part.strip() for part in (stdout, stderr) if part.strip())
-    if not combined:
-        return None
-    lines = [line.strip() for line in combined.splitlines() if line.strip()]
-    version_line = next(
-        (
-            line
-            for line in lines
-            if re.search(r"\b(?:PDB2PQR|pdb2pqr|APBS|PyMOL)\b.*\d", line)
-        ),
-        None,
-    )
-    return (version_line or lines[0])[:500]
 
 
 def check_tool(
@@ -100,7 +84,7 @@ def check_tool(
             version=None,
             message=f"Could not query version: {exc}",
         )
-    version = _first_line(completed.stdout, completed.stderr)
+    version = version_line("\n".join((completed.stdout, completed.stderr)))
     if completed.returncode not in accepted_returncodes:
         return DoctorResult(
             name=name,

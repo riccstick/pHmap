@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,64 +9,28 @@ from typing import Any
 from phmap.backends import (
     ApbsBackend,
     ApbsRequest,
+    ArtifactError,
     CommandExecutionError,
     CommandResult,
     CommandRunner,
+    CommandStartError,
+    CommandTimeoutError,
     Pdb2pqrBackend,
     Pdb2pqrRequest,
     PyMOLBackend,
-    PyMOLRenderOptions,
     PyMOLRenderRequest,
     VersionInfo,
     discover_executable,
     pdb2pqr_dx_path,
 )
-from phmap.compose import CompositionSettings, RenderedTile, compose_grid
+from phmap.compose import RenderedTile, compose_grid
+from phmap.configuration import WorkflowOptions as WorkflowOptions
 from phmap.errors import ConfigurationError
 from phmap.manifest import RunManifest, sha256_file, utc_now
 from phmap.models import RunInputs
 from phmap.scientific import summarize_opendx, summarize_pqr
+from phmap.versions import version_line
 from phmap.workspace import RunWorkspace
-
-
-@dataclass(frozen=True, slots=True)
-class WorkflowOptions:
-    """Execution and rendering options for a local run."""
-
-    output_dir: Path | None = None
-    runs_dir: Path = Path("runs")
-    size: int = 500
-    dpi: int = 300
-    potential_level: float = 5.0
-    ramp_colors: tuple[str, str, str] = ("red", "white", "blue")
-    background: str | None = None
-    foreground: str = "black"
-    force_field: str = "PARSE"
-    timeout: float = 1800.0
-    ray_trace: bool = True
-    pdb2pqr_executable: str | Path = "pdb2pqr30"
-    apbs_executable: str | Path = "apbs"
-    pymol_executable: str | Path = "pymol"
-
-    def __post_init__(self) -> None:
-        if isinstance(self.size, bool) or not 64 <= self.size <= 16_384:
-            raise ConfigurationError("Image size must be between 64 and 16384 pixels")
-        if isinstance(self.dpi, bool) or not 1 <= self.dpi <= 4_800:
-            raise ConfigurationError("DPI must be between 1 and 4800")
-        if (
-            isinstance(self.potential_level, bool)
-            or not math.isfinite(self.potential_level)
-            or self.potential_level <= 0
-        ):
-            raise ConfigurationError("Potential level must be finite and positive")
-        if (
-            isinstance(self.timeout, bool)
-            or not math.isfinite(self.timeout)
-            or self.timeout <= 0
-        ):
-            raise ConfigurationError("Backend timeout must be finite and positive")
-        if len(self.ramp_colors) != 3:
-            raise ConfigurationError("The potential ramp requires exactly three colors")
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,20 +43,22 @@ class RunResult:
 
 
 def _version_dict(info: VersionInfo) -> dict[str, Any]:
-    lines = [line.strip() for line in info.output.splitlines() if line.strip()]
-    version_line = next(
-        (
-            line
-            for line in lines
-            if re.search(r"\b(?:PDB2PQR|pdb2pqr|APBS|PyMOL)\b.*\d", line)
-        ),
-        lines[0] if lines else "unknown",
-    )
     return {
         "executable": str(info.executable),
         "argv": list(info.argv),
         "returncode": info.returncode,
-        "version": version_line[:500],
+        "version": version_line(info.output) or "unknown",
+    }
+
+
+def _command_dict(result: CommandResult) -> dict[str, Any]:
+    return {
+        "argv": list(result.argv),
+        "cwd": str(result.cwd),
+        "returncode": result.returncode,
+        "duration_seconds": result.duration_seconds,
+        "stdout": str(result.stdout_path),
+        "stderr": str(result.stderr_path),
     }
 
 
@@ -108,12 +72,7 @@ def _stage_dict(
     details = {
         "name": name,
         "status": "completed",
-        "argv": list(result.argv),
-        "cwd": str(result.cwd),
-        "returncode": result.returncode,
-        "duration_seconds": result.duration_seconds,
-        "stdout": str(result.stdout_path),
-        "stderr": str(result.stderr_path),
+        **_command_dict(result),
         "outputs": [
             {
                 "path": str(path),
@@ -129,21 +88,36 @@ def _stage_dict(
     return details
 
 
-def _failed_command_dict(error: CommandExecutionError) -> dict[str, Any]:
-    result = error.result
-    return {
-        "name": result.stage,
+def _failed_stage_dict(
+    name: str, error: Exception, runner: CommandRunner, cwd: Path,
+) -> dict[str, Any]:
+    """Retain a stage record even when no completed command result exists."""
+
+    details: dict[str, Any] = {
+        "name": name,
         "status": "failed",
-        "argv": list(result.argv),
-        "cwd": str(result.cwd),
-        "returncode": result.returncode,
-        "duration_seconds": result.duration_seconds,
-        "stdout": str(result.stdout_path),
-        "stderr": str(result.stderr_path),
+        "cwd": str(cwd),
+        "stdout": str(runner.log_dir / f"{name}.stdout.log"),
+        "stderr": str(runner.log_dir / f"{name}.stderr.log"),
         "outputs": [],
         "error": str(error),
+        "error_type": type(error).__name__,
         "finished_at": utc_now(),
     }
+    if isinstance(error, CommandExecutionError):
+        details.update(_command_dict(error.result))
+    elif isinstance(error, CommandTimeoutError):
+        details.update(
+            timeout_seconds=error.timeout,
+            stdout=str(error.stdout_path), stderr=str(error.stderr_path),
+        )
+    elif isinstance(error, CommandStartError):
+        details["executable"] = error.executable
+    elif isinstance(error, ArtifactError):
+        details["artifact"] = {
+            "path": str(error.path), "description": error.description, "reason": error.reason,
+        }
+    return details
 
 
 def _configuration(inputs: RunInputs, options: WorkflowOptions) -> dict[str, Any]:
@@ -317,20 +291,12 @@ class LocalWorkflow:
                                 png_path=paths.tile,
                                 script_path=paths.pymol_script,
                                 work_dir=paths.root,
-                                options=PyMOLRenderOptions(
-                                    width=self.options.size,
-                                    height=self.options.size,
-                                    dpi=self.options.dpi,
-                                    level=self.options.potential_level,
-                                    ramp_colors=self.options.ramp_colors,
-                                    background=self.options.background or "white",
-                                    transparent_background=self.options.background is None,
+                                options=self.options.render_options(
                                     view=(
                                         None
                                         if self.inputs.view is None
                                         else self.inputs.view.values
                                     ),
-                                    ray_trace=self.options.ray_trace,
                                 ),
                             ),
                             timeout=self.options.timeout,
@@ -348,8 +314,10 @@ class LocalWorkflow:
                         )
                         manifest.finish_task(task, "completed")
                     except Exception as exc:
-                        if isinstance(exc, CommandExecutionError):
-                            manifest.record_stage(task, _failed_command_dict(exc))
+                        if stage := task.get("current_stage"):
+                            manifest.record_stage(
+                                task, _failed_stage_dict(stage, exc, runner, paths.root)
+                            )
                         manifest.finish_task(task, "failed", error=str(exc))
                         raise
 
@@ -360,12 +328,7 @@ class LocalWorkflow:
                 ph_order=self.inputs.ph_values,
                 tiles=rendered_tiles,
                 output_path=workspace.output / "pHmap.png",
-                settings=CompositionSettings(
-                    background=self.options.background,
-                    foreground=self.options.foreground,
-                    potential_level=self.options.potential_level,
-                    ramp_colors=self.options.ramp_colors,
-                ),
+                settings=self.options.composition_settings(),
             )
             manifest.record_output("figure", figure)
             manifest.set_status("completed")

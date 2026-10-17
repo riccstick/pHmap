@@ -6,8 +6,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from fake_tools import fake_tools as _fake_tools
 from fastapi.testclient import TestClient
-from test_workflow import _fake_tools
 
 from phmap.desktop import DesktopService, child_environment, matching_service
 from phmap.errors import ConfigurationError

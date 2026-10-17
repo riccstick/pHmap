@@ -248,6 +248,7 @@ class CommandRunner:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                **hidden_process_options(),
             )
         except subprocess.TimeoutExpired as exc:
             raise VersionProbeError(
