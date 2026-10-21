@@ -13,13 +13,36 @@ from phmap.backends import BackendError as ScientificBackendError
 from phmap.configuration import WorkflowOptions
 from phmap.doctor import run_doctor
 from phmap.errors import PHMapError
-from phmap.inputs import validate_run_inputs
-from phmap.models import InputValidationError, RunInputs
+from phmap.inputs import (
+    load_pymol_view,
+    parse_ph_selection,
+    validate_mol2_path,
+    validate_protein_names,
+    validate_run_inputs,
+    validate_structure_files,
+)
+from phmap.models import InputValidationError, RunInputs, structure_format
+from phmap.structures import fetch_structure, normalize_pdb_id, structure_source
 from phmap.workflow import LocalWorkflow
 
 
 def _add_input_arguments(parser: argparse.ArgumentParser, *, include_run: bool) -> None:
-    parser.add_argument("pdb", nargs="+", type=Path, help="one or more PDB input files")
+    parser.add_argument(
+        "pdb", nargs="*", type=Path, metavar="STRUCTURE",
+        help="local .pdb, .cif, or .mmcif structures; appended after any --pdb-id entries",
+    )
+    parser.add_argument(
+        "--pdb-id", action="append", default=[], metavar="CODE",
+        help="fetch an RCSB PDB entry as mmCIF, e.g. 3SQR; repeat for multiple entries",
+    )
+    parser.add_argument(
+        "--structure-cache-dir", type=Path, default=Path("runs/.structures"),
+        help="cache for downloaded structures (default: runs/.structures)",
+    )
+    parser.add_argument(
+        "--refresh-structures", action="store_true",
+        help="download fresh copies of --pdb-id entries instead of reusing verified cached files",
+    )
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument(
         "--ph",
@@ -43,12 +66,12 @@ def _add_input_arguments(parser: argparse.ArgumentParser, *, include_run: bool) 
     parser.add_argument(
         "--protein-id",
         action="append",
-        help="explicit safe protein ID; repeat once per PDB",
+        help="explicit safe protein ID; repeat once per structure, fetched entries first",
     )
     parser.add_argument(
         "--label",
         action="append",
-        help="display label; repeat once per PDB",
+        help="display label; repeat once per structure, fetched entries first",
     )
     parser.add_argument(
         "--output-dir",
@@ -114,8 +137,25 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _inputs_from_args(args: argparse.Namespace) -> RunInputs:
+    if not args.pdb and not args.pdb_id:
+        raise InputValidationError("Provide local structure files or at least one --pdb-id")
+    # Reject invalid selections and IDs before making any network requests.
+    parse_ph_selection(ph_values=args.ph_values, ph_range=args.ph_range)
+    pdb_ids = [normalize_pdb_id(pdb_id) for pdb_id in args.pdb_id]
+    validate_protein_names(
+        len(pdb_ids) + len(args.pdb), protein_ids=args.protein_id, labels=args.label,
+    )
+    local_paths = validate_structure_files(args.pdb)
+    if args.view is not None:
+        load_pymol_view(args.view)
+    if args.ligand is not None:
+        validate_mol2_path(args.ligand)
+    paths = [
+        fetch_structure(pdb_id, args.structure_cache_dir, refresh=args.refresh_structures)
+        for pdb_id in pdb_ids
+    ] + list(local_paths)
     return validate_run_inputs(
-        args.pdb,
+        paths,
         ph_values=args.ph_values,
         ph_range=args.ph_range,
         protein_ids=args.protein_id,
@@ -133,6 +173,9 @@ def _input_summary(inputs: RunInputs, output_dir: Path | None = None) -> dict[st
                 "id": protein.protein_id,
                 "label": protein.label,
                 "pdb": str(protein.path),
+                "path": str(protein.path),
+                "format": structure_format(protein.path),
+                "source": structure_source(protein.path) or None,
                 "ligand": None if protein.ligand is None else str(protein.ligand),
             }
             for protein in inputs.proteins
@@ -174,7 +217,6 @@ def _validate(args: argparse.Namespace) -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
-    inputs = _inputs_from_args(args)
     options = WorkflowOptions(
         output_dir=args.output_dir,
         runs_dir=args.runs_dir,
@@ -191,6 +233,7 @@ def _run(args: argparse.Namespace) -> int:
         apbs_executable=args.apbs_executable,
         pymol_executable=args.pymol_executable,
     )
+    inputs = _inputs_from_args(args)
     result = LocalWorkflow(inputs, options).run()
     print(f"Run completed: {result.workspace.root}")
     print(f"Figure: {result.figure}")

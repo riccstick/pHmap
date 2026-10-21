@@ -172,7 +172,7 @@ class Pdb2pqrBackend:
         stage: str = "pdb2pqr",
         timeout: float | None = None,
     ) -> Pdb2pqrArtifacts:
-        require_nonempty_file(request.pdb_path, "PDB input")
+        require_nonempty_file(request.pdb_path, "Protein structure input")
         if request.ligand_path is not None:
             require_nonempty_file(request.ligand_path, "ligand input")
 

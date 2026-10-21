@@ -4,9 +4,12 @@ import json
 import os
 import re
 import time
+import urllib.error
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
+from fake_structure import CIF, StructureResponse
 from fake_tools import fake_tools as _fake_tools
 from fake_tools import tool as _executable
 from fastapi.testclient import TestClient
@@ -55,7 +58,9 @@ def _wait(client: TestClient, run_id: str, expected: set[str]) -> dict:
 def test_gui_loads_the_progress_controller_before_the_page_script(client: TestClient) -> None:
     page = client.get("/").text
     assert page.index("/static/run-selection.js") < page.index("/static/app.js")
+    assert page.index("/static/protein-selection.js") < page.index("/static/app.js")
     assert client.get("/static/run-selection.js").status_code == 200
+    assert client.get("/static/protein-selection.js").status_code == 200
     assert client.get("/static/app.js").status_code == 200
 
 
@@ -122,6 +127,125 @@ def test_multiple_uploads_keep_selected_order_and_labels(client: TestClient) -> 
     assert data["total"] == 12
     assert [protein["label"] for protein in data["proteins"]] == ["Mutant", "Wild type"]
     assert data["ph_values"] == ["3", "4", "5", "6", "7", "8"]
+
+
+def test_pdb_id_fetch_is_protected_and_returns_mmcif_provenance(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opener = Mock()
+    opener.open.side_effect = lambda *args, **kwargs: StructureResponse()
+    monkeypatch.setattr("phmap.structures.urllib.request.build_opener", lambda *_: opener)
+    assert client.post("/api/structures/fetch", json={"pdb_id": "3sqr"}).status_code == 403
+    headers = _token(client)
+    assert client.post(
+        "/api/structures/fetch", headers=headers, json={"pdb_id": "https://evil.example"},
+    ).status_code == 422
+    opener.open.assert_not_called()
+    response = client.post("/api/structures/fetch", headers=headers, json={"pdb_id": "3sqr"})
+    assert response.status_code == 200, response.text
+    assert response.json()["pdb_id"] == "3SQR"
+    assert response.json()["format"] == "mmcif"
+    assert response.json()["source"]["provider"] == "RCSB PDB"
+    client.post("/api/structures/fetch", headers=headers, json={"pdb_id": "3SQR"})
+    assert opener.open.call_count == 1
+
+
+def test_gui_mixes_fetched_reference_and_local_variants_in_explicit_row_order(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opener = Mock()
+    opener.open.side_effect = lambda *args, **kwargs: StructureResponse()
+    monkeypatch.setattr("phmap.structures.urllib.request.build_opener", lambda *_: opener)
+    response = client.post(
+        "/api/runs", headers=_token(client),
+        data={"settings": json.dumps({
+            "ph_mode": "explicit", "ph_values": "7", "size": 64, "ray_trace": False,
+            "labels": ["Variant 2", "WT", "Variant 1"],
+            "structures": [{"upload_index": 1}, {"pdb_id": "3sqr"}, {"upload_index": 0}],
+        })},
+        files=[("proteins", ("variant1.pdb", b"ATOM\n")),
+               ("proteins", ("variant2.MMCIF", CIF))],
+    )
+    assert response.status_code == 202, response.text
+    run_id = response.json()["run_id"]
+    run = _wait(client, run_id, {"completed", "failed"})
+    assert run["status"] == "completed", run["error"]
+    assert [row["protein"] for row in run["cells"]] == ["Variant 2", "WT", "Variant 1"]
+    manifest = client.get(f"/api/runs/{run_id}/files/manifest.json").json()
+    assert [p["format"] for p in manifest["configuration"]["proteins"]] == [
+        "mmcif", "mmcif", "pdb",
+    ]
+    reference = next(entry for entry in manifest["inputs"] if entry.get("source"))
+    assert reference["source"]["pdb_id"] == "3SQR"
+    assert reference["source"]["sha256"] == reference["sha256"]
+    assert client.get(f"/api/runs/{run_id}/files/inputs/variant2.cif").content == CIF
+    assert opener.open.call_count == 1  # The isolated CLI worker does not fetch again.
+
+
+def test_gui_supports_pdb_id_without_any_uploads(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opener = Mock()
+    opener.open.side_effect = lambda *args, **kwargs: StructureResponse()
+    monkeypatch.setattr("phmap.structures.urllib.request.build_opener", lambda *_: opener)
+    response = client.post(
+        "/api/validate", headers=_token(client),
+        data={"settings": json.dumps({"structures": [{"pdb_id": "3sqr"}]})},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["total"] == 6
+
+
+@pytest.mark.parametrize("structures", [
+    [{"upload_index": 0}, {"upload_index": 0}], [{"upload_index": 1}],
+    [{"pdb_id": "3sqr", "upload_index": 0}], [{}], [{"pdb_id": "../3sqr"}],
+])
+def test_gui_rejects_ambiguous_or_invalid_structure_rows(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, structures: list[dict],
+) -> None:
+    fetch = Mock(side_effect=AssertionError("Invalid rows must not download anything"))
+    monkeypatch.setattr("phmap.gui.app.fetch_structure", fetch)
+    assert _submit(client, endpoint="/api/validate", structures=structures).status_code == 422
+    fetch.assert_not_called()
+
+
+def test_gui_returns_clear_not_found_status_for_missing_pdb_entries(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opener = Mock()
+    opener.open.side_effect = urllib.error.HTTPError(
+        "https://files.rcsb.org", 404, "Missing", {}, None,
+    )
+    monkeypatch.setattr("phmap.structures.urllib.request.build_opener", lambda *_: opener)
+    response = client.post(
+        "/api/structures/fetch", headers=_token(client), json={"pdb_id": "9zzz"},
+    )
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("invalid", ["label", "count", "view", "cif"])
+def test_gui_preflights_local_inputs_before_fetching_remote_rows(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, invalid: str,
+) -> None:
+    fetch = Mock(side_effect=AssertionError("Invalid selections must not download"))
+    monkeypatch.setattr("phmap.gui.app.fetch_structure", fetch)
+    settings = {"structures": [{"pdb_id": "3sqr"}, {"upload_index": 0}]}
+    files = [("proteins", ("variant.pdb", b"ATOM\n"))]
+    if invalid == "label":
+        settings["labels"] = ["WT", "Invalid/name"]
+    elif invalid == "count":
+        settings["labels"] = ["Only one label"]
+    elif invalid == "view":
+        files.append(("view", ("view.txt", b"not a camera view")))
+    else:
+        files = [("proteins", ("variant.cif", b"not mmcif"))]
+    response = client.post(
+        "/api/validate", headers=_token(client),
+        data={"settings": json.dumps(settings)}, files=files,
+    )
+    assert response.status_code == 422, response.text
+    fetch.assert_not_called()
 
 
 def test_cli_run_history_is_visible_and_artifact_paths_are_contained(

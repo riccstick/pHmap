@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 
-def test_run_selection_controller() -> None:
+@pytest.mark.parametrize("script", ["run-selection.mjs", "protein-selection.mjs"])
+def test_frontend_controllers(script: str) -> None:
     node = shutil.which("node")
     if node is None:
         if os.environ.get("GITHUB_ACTIONS") == "true":
@@ -14,8 +15,8 @@ def test_run_selection_controller() -> None:
         pytest.skip("Install Node.js to run the optional local frontend checks")
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
-        [node, str(root / "tests/frontend/run-selection.mjs")],
+        [node, str(root / "tests/frontend" / script)],
         cwd=root, capture_output=True, text=True, timeout=30, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "run-selection checks passed" in result.stdout
+    assert "checks passed" in result.stdout

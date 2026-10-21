@@ -98,7 +98,7 @@ def test_protein_input_rejects_missing_or_wrong_file_types(tmp_path: Path) -> No
         ProteinInput(tmp_path / "missing.pdb")
     wrong = tmp_path / "protein.txt"
     wrong.write_text("ATOM\n", encoding="utf-8")
-    with pytest.raises(InputValidationError, match=".pdb extension"):
+    with pytest.raises(InputValidationError, match=".pdb or .cif or .mmcif extension"):
         ProteinInput(wrong)
 
     pdb = _pdb(tmp_path)
@@ -106,6 +106,14 @@ def test_protein_input_rejects_missing_or_wrong_file_types(tmp_path: Path) -> No
     wrong_ligand.write_text("ATOM\n", encoding="utf-8")
     with pytest.raises(InputValidationError, match=".mol2 extension"):
         ProteinInput(pdb, ligand=wrong_ligand)
+
+
+@pytest.mark.parametrize("extension", [".pdb", ".cif", ".mmcif", ".CIF", ".MMCIF"])
+def test_protein_input_accepts_legacy_and_modern_structure_extensions(
+    tmp_path: Path, extension: str,
+) -> None:
+    path = _pdb(tmp_path, "variant" + extension)
+    assert ProteinInput(path).path == path.resolve()
 
 
 def test_safe_name_helpers_handle_paths_unicode_and_reserved_names() -> None:

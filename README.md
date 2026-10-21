@@ -8,7 +8,8 @@ figure is composed in Python.
 ![Python-generated pH profile example](docs/assets/example-map.png)
 
 pHmap is a local Python application with a command-line interface, a browser
-GUI, and a double-click desktop launcher. It supports one or more PDB files,
+GUI, and a double-click desktop launcher. It supports PDB and PDBx/mmCIF files,
+optional RCSB PDB downloads by structure ID (for example `3SQR`),
 explicit pH values or an inclusive pH range, an optional validated PyMOL camera
 view, deterministic rendering order, isolated run directories, and a JSON
 provenance manifest.
@@ -104,15 +105,20 @@ pixi install
 pixi run gui
 ```
 
-This opens `http://127.0.0.1:8765`. Choose one or more PDB files, edit their row
-labels and order, and select a pH range or explicit values. Optional camera and
+This opens `http://127.0.0.1:8765`. Enter a PDB code and click **Add PDB entry**,
+or add local `.pdb`, `.cif`, and `.mmcif` structures. Mix a fetched reference
+with uploaded variants, edit their row labels and order, and select a pH range
+or explicit values. Adding more files appends them to the existing comparison.
+Optional camera and
 ligand files and figure settings are available in the setup form. Validate the
 selection or start a calculation; the interface shows live stage progress,
 individual surfaces, logs, and the final PNG download.
 
 The GUI queues one calculation at a time and can cancel queued or active runs.
 History includes both GUI runs and CLI runs in the same `runs/` directory. Files
-are processed locally, and the interface uses no remote scripts or services.
+are processed locally, with no remote calculation services or scripts. Optional
+structure fetching contacts the official RCSB archive; your variant files are
+never sent there. Verified cached downloads can be reused offline.
 Closing the browser tab does not stop calculations; stopping the GUI server
 with Ctrl+C (or quitting the desktop launcher) cancels its unfinished jobs and
 preserves their files and logs.
@@ -130,6 +136,20 @@ a three-protein grid for pH 3 through 8 while the GUI can display its saved run:
 pixi run phmap run example/protein.pdb example/mutant1.pdb example/mutant2.pdb \
   --ph-range 3 8 1 --view example/set_view.txt
 ```
+
+Fetch a reference structure and compare local variants (replace the variant paths
+with your files):
+
+```console
+pixi run phmap run --pdb-id 3SQR variant1.cif variant2.pdb --ph-range 3 8 1
+```
+
+Fetched entries come first, followed by local files. Repeat `--pdb-id` for more
+archive entries. Downloads use PDBx/mmCIF and are cached in `runs/.structures`;
+`--structure-cache-dir` changes that directory and `--refresh-structures` requests
+fresh archive copies. Original mmCIF files are retained; the pinned scientific
+backend uses an audited PDB intermediate with documented size/identifier limits.
+See the [structure tutorial](docs/tutorial.md#pdbxmmcif-and-pdb-ids).
 
 ## Python-only development
 
@@ -157,7 +177,8 @@ the change classification and required merge checks.
 
 Available in the current Python application:
 
-- strict PDB, pH range/list, ligand-path, and 18-value camera validation;
+- PDB/PDBx input validation, verified PDB-ID downloads, pH range/list,
+  ligand-path, and 18-value camera validation;
 - modern PDB2PQR, APBS, and headless PyMOL subprocess adapters;
 - deterministic multi-protein/pH ordering;
 - checked outputs, per-cell logs, tool-version capture, and input/output hashes;

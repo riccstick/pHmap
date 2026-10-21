@@ -13,71 +13,55 @@ import webbrowser
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from phmap import __version__
-from phmap.configuration import WorkflowOptions
 from phmap.doctor import run_doctor
-from phmap.errors import ConfigurationError
-from phmap.inputs import validate_run_inputs
-from phmap.models import InputValidationError, RunInputs
+from phmap.errors import ConfigurationError, StructureFetchError, StructureNotFoundError
+from phmap.inputs import load_pymol_view, validate_run_inputs, validate_structure_files
+from phmap.models import STRUCTURE_SUFFIXES, InputValidationError, RunInputs, structure_format
+from phmap.structure_formats import validate_mmcif
+from phmap.structures import fetch_structure, normalize_pdb_id, structure_source
 
 from .jobs import TERMINAL, JobManager
+from .schemas import FetchSettings
+from .schemas import RunSettings as RunSettings
 
 _ASSETS = Path(__file__).parent
 _MAX_UPLOAD = 64 * 1024 * 1024
 
 
-class RunSettings(BaseModel):
-    """Browser inputs have the same validation boundary as command-line inputs."""
-
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
-
-    name: str = Field(default="", max_length=120)
-    ph_mode: Literal["range", "explicit"] = "range"
-    ph_start: str = "3"
-    ph_stop: str = "8"
-    ph_step: str = "1"
-    ph_values: str = ""
-    labels: list[str] = Field(default_factory=list, max_length=32)
-    size: int = Field(default=500, ge=64, le=4096)
-    dpi: int = Field(default=300, ge=1, le=4800)
-    level: float = Field(default=5.0, gt=0)
-    background: str | None = "white"
-    foreground: str = "black"
-    ramp_colors: tuple[str, str, str] = ("red", "white", "blue")
-    force_field: Literal["PARSE", "AMBER", "CHARMM"] = "PARSE"
-    ray_trace: bool = True
-
-    def options(self, runs_dir: Path) -> WorkflowOptions:
-        return WorkflowOptions(
-            runs_dir=runs_dir, size=self.size, dpi=self.dpi, potential_level=self.level,
-            ramp_colors=self.ramp_colors, background=self.background,
-            foreground=self.foreground, force_field=self.force_field, ray_trace=self.ray_trace,
-        )
-
-
 def _summary(inputs: RunInputs) -> dict[str, Any]:
     return {
-        "proteins": [{"id": p.protein_id, "label": p.label} for p in inputs.proteins],
+        "proteins": [{
+            "id": p.protein_id, "label": p.label,
+            "format": structure_format(p.path),
+            "source": structure_source(p.path) or None,
+        } for p in inputs.proteins],
         "ph_values": [str(value) for value in inputs.ph_values],
         "total": len(inputs.proteins) * len(inputs.ph_values),
     }
 
 
-async def _save_upload(upload: UploadFile, parent: Path, *, suffix: str) -> Path:
+async def _save_upload(
+    upload: UploadFile, parent: Path, *, suffix: str | tuple[str, ...],
+) -> Path:
     filename = Path((upload.filename or "").replace("\\", "/")).name
-    if not filename or Path(filename).suffix.lower() != suffix:
-        raise InputValidationError(f"Choose a {suffix} file; received {filename!r}")
+    suffixes = (suffix,) if isinstance(suffix, str) else suffix
+    if not filename or Path(filename).suffix.lower() not in suffixes:
+        raise InputValidationError(
+            f"Choose a {' / '.join(suffixes)} file; received {filename!r}"
+        )
     if not filename.isprintable() or filename.startswith("."):
         raise InputValidationError("File names must be printable and must not start with '.'")
     parent.mkdir(parents=True, exist_ok=True)
@@ -183,23 +167,51 @@ def create_app(
     def history() -> list[dict[str, Any]]:
         return jobs.history()
 
+    async def resolve_pdb(pdb_id: str, *, refresh: bool = False) -> Path:
+        try:
+            return await asyncio.to_thread(
+                fetch_structure, pdb_id, jobs.control / "structures", refresh=refresh,
+            )
+        except StructureNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except StructureFetchError as exc:
+            raise HTTPException(502, str(exc)) from exc
+
+    @app.post("/api/structures/fetch")
+    async def fetch(settings: FetchSettings) -> dict[str, Any]:
+        try:
+            pdb_id = normalize_pdb_id(settings.pdb_id)
+        except InputValidationError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        path = await resolve_pdb(pdb_id, refresh=settings.refresh)
+        try:
+            await asyncio.to_thread(validate_mmcif, path)
+        except ConfigurationError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {
+            "pdb_id": pdb_id, "filename": path.name, "format": "mmcif",
+            "source": await run_in_threadpool(structure_source, path),
+        }
+
     async def receive(request: Request, *, validate_only: bool) -> dict[str, Any]:
         try:
             async with request.form(max_files=34, max_fields=4, max_part_size=_MAX_UPLOAD) as form:
                 settings = RunSettings.model_validate_json(str(form.get("settings", "{}")))
+                options = settings.options(jobs.runs_dir)
                 uploads = form.getlist("proteins")
-                if not 1 <= len(uploads) <= 32 or not all(
-                    isinstance(upload, UploadFile) for upload in uploads
-                ):
-                    raise InputValidationError("Choose between 1 and 32 PDB files")
+                if not all(isinstance(upload, UploadFile) for upload in uploads):
+                    raise InputValidationError("Choose protein structure files")
+                rows = settings.selected_rows(len(uploads))
                 with tempfile.TemporaryDirectory(
                     prefix="selection-", dir=jobs.uploads
                 ) as temporary:
                     root = Path(temporary)
-                    paths = []
+                    uploaded = []
                     for index, upload in enumerate(uploads):
                         assert isinstance(upload, UploadFile)
-                        paths.append(await _save_upload(upload, root / str(index), suffix=".pdb"))
+                        uploaded.append(await _save_upload(
+                            upload, root / str(index), suffix=STRUCTURE_SUFFIXES,
+                        ))
                     view = form.get("view")
                     view_path = None
                     if isinstance(view, UploadFile) and view.filename:
@@ -212,20 +224,34 @@ def create_app(
                         _MAX_UPLOAD
                     ):
                         raise InputValidationError("Total upload must be smaller than 64 MiB")
-                    inputs = validate_run_inputs(
+                    await run_in_threadpool(validate_structure_files, uploaded)
+                    if view_path is not None:
+                        await run_in_threadpool(load_pymol_view, view_path)
+                    paths = []
+                    for row in rows:
+                        if row.pdb_id is not None:
+                            paths.append(await resolve_pdb(row.pdb_id))
+                        else:
+                            assert row.upload_index is not None
+                            paths.append(uploaded[row.upload_index])
+                    if sum(path.stat().st_size for path in paths) > _MAX_UPLOAD:
+                        raise InputValidationError(
+                            "Total structure input must be smaller than 64 MiB"
+                        )
+                    inputs = await run_in_threadpool(
+                        validate_run_inputs,
                         paths, labels=settings.labels or None, view_file=view_path,
                         ligand=ligand_path,
                         ph_values=settings.ph_values if settings.ph_mode == "explicit" else None,
                         ph_range=(settings.ph_start, settings.ph_stop, settings.ph_step)
                         if settings.ph_mode == "range" else None,
                     )
-                    if len(inputs.ph_values) * len(inputs.proteins) > 512:
-                        raise InputValidationError("Use at most 512 calculation cells per GUI run")
-                    options = settings.options(jobs.runs_dir)
-                    summary = _summary(inputs)
+                    summary = await run_in_threadpool(_summary, inputs)
                     if validate_only:
                         return {"valid": True, **summary}
-                    run_id = jobs.submit(inputs, options, name=settings.name)
+                    run_id = await run_in_threadpool(
+                        jobs.submit, inputs, options, name=settings.name,
+                    )
                     return {"run_id": run_id, **summary}
         except ValidationError as exc:
             messages = "; ".join(
@@ -290,7 +316,8 @@ def create_app(
             if not path.is_relative_to(root) or not path.is_file():
                 raise FileNotFoundError
             if path.suffix.lower() not in {
-                ".png", ".json", ".log", ".pqr", ".dx", ".in", ".pml", ".pdb", ".mol2"
+                ".png", ".json", ".log", ".pqr", ".dx", ".in", ".pml", ".pdb", ".mol2",
+                ".cif", ".mmcif",
             }:
                 raise FileNotFoundError
             return path

@@ -4,10 +4,12 @@ const $ = (id) => document.getElementById(id);
 const token = document.querySelector('meta[name="phmap-token"]').content;
 const terminal = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const stageNames = { pdb2pqr: "Preparing protonation", apbs: "Calculating potential", pymol: "Rendering surface" };
-let proteins = [];
+const proteinSelection = new ProteinSelection();
+const proteins = proteinSelection.rows;
 let selected = null;
 let toolsReady = false;
 let busy = false;
+let fetching = false;
 let lastLogPaths = "";
 let selectedStatus = null;
 const selection = new RunSelection({
@@ -52,15 +54,48 @@ function message(text, error = false) {
 }
 
 function updateButtons() {
-  $("submit").disabled = busy || !proteins.length || !toolsReady;
-  $("validate").disabled = busy || !proteins.length;
+  $("submit").disabled = busy || fetching || !proteins.length || !toolsReady;
+  $("validate").disabled = busy || fetching || !proteins.length;
+  $("fetch-pdb").disabled = busy || fetching;
+  $("fetch-pdb").textContent = fetching ? "Fetching…" : "Add PDB entry";
+  $("proteins").disabled = busy;
   $("submit").textContent = busy ? "Submitting…" : "Start calculation →";
 }
 
 function setProteins(files) {
-  proteins = Array.from(files).map((file) => ({ file, label: file.name.replace(/\.pdb$/i, "") }));
-  renderProteins();
-  message("");
+  try {
+    proteinSelection.addFiles(files);
+    $("proteins").value = "";
+    renderProteins();
+    message("");
+  } catch (error) {
+    message(error.message, true);
+  }
+}
+
+async function addPdb() {
+  if (busy || fetching) return;
+  const pdbId = $("pdb-code").value.trim();
+  if (!pdbId) { message("Enter a PDB ID, for example 3SQR.", true); return; }
+  if (proteins.length >= 32) { message("Use at most 32 protein structures per comparison.", true); return; }
+  fetching = true;
+  updateButtons();
+  message(`Fetching ${pdbId} from RCSB PDB…`);
+  try {
+    const result = await api("/api/structures/fetch", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pdb_id: pdbId }),
+    });
+    proteinSelection.addPdb(result.pdb_id);
+    $("pdb-code").value = "";
+    renderProteins();
+    message(`${result.pdb_id} added as PDBx/mmCIF. Add local variant files to compare them.`);
+  } catch (error) {
+    message(error.message, true);
+  } finally {
+    fetching = false;
+    updateButtons();
+  }
 }
 
 function renderProteins() {
@@ -68,19 +103,20 @@ function renderProteins() {
   list.replaceChildren();
   proteins.forEach((protein, index) => {
     const row = node("div", undefined, "protein-item");
-    const filename = node("span", `${index + 1}. ${protein.file.name}`, "filename");
-    filename.title = protein.file.name;
+    const name = protein.file ? protein.file.name : `${protein.pdbId} · RCSB PDB`;
+    const filename = node("span", `${index + 1}. ${name}`, "filename");
+    filename.title = name;
     const label = node("input");
     label.type = "text";
     label.value = protein.label;
     label.maxLength = 128;
-    label.setAttribute("aria-label", `Row label for ${protein.file.name}`);
+    label.setAttribute("aria-label", `Row label for ${name}`);
     label.addEventListener("input", () => { protein.label = label.value; });
     const controls = node("div", undefined, "protein-controls");
     const up = node("button", "↑");
     up.type = "button";
     up.title = "Move protein up";
-    up.setAttribute("aria-label", `Move ${protein.file.name} up`);
+    up.setAttribute("aria-label", `Move ${name} up`);
     up.disabled = index === 0;
     up.onclick = () => {
       [proteins[index - 1], proteins[index]] = [proteins[index], proteins[index - 1]];
@@ -89,7 +125,7 @@ function renderProteins() {
     const down = node("button", "↓");
     down.type = "button";
     down.title = "Move protein down";
-    down.setAttribute("aria-label", `Move ${protein.file.name} down`);
+    down.setAttribute("aria-label", `Move ${name} down`);
     down.disabled = index === proteins.length - 1;
     down.onclick = () => {
       [proteins[index + 1], proteins[index]] = [proteins[index], proteins[index + 1]];
@@ -98,7 +134,7 @@ function renderProteins() {
     const remove = node("button", "×");
     remove.type = "button";
     remove.title = "Remove protein";
-    remove.setAttribute("aria-label", `Remove ${protein.file.name}`);
+    remove.setAttribute("aria-label", `Remove ${name}`);
     remove.onclick = () => { proteins.splice(index, 1); renderProteins(); };
     controls.append(up, down, remove);
     row.append(filename, label, controls);
@@ -133,11 +169,12 @@ function updateCount() {
 
 function formData() {
   const background = $("background").value;
+  const inputs = proteinSelection.inputs();
   const settings = {
     name: $("run-name").value,
     ph_mode: phMode(), ph_start: $("ph-start").value, ph_stop: $("ph-stop").value,
     ph_step: $("ph-step").value, ph_values: $("ph-values").value,
-    labels: proteins.map((p) => p.label), size: Number($("size").value),
+    labels: inputs.labels, structures: inputs.structures, size: Number($("size").value),
     dpi: Number($("dpi").value), level: Number($("level").value),
     background: background === "transparent" ? null : background,
     foreground: background === "black" ? "white" : "black",
@@ -146,16 +183,16 @@ function formData() {
   };
   const data = new FormData();
   data.append("settings", JSON.stringify(settings));
-  proteins.forEach((p) => data.append("proteins", p.file, p.file.name));
+  inputs.uploads.forEach((file) => data.append("proteins", file, file.name));
   if ($("view").files.length) data.append("view", $("view").files[0]);
   if ($("ligand").files.length) data.append("ligand", $("ligand").files[0]);
   return data;
 }
 
 async function send(validateOnly) {
-  if (!proteins.length || busy) return;
-  if (proteins.some((p) => !/\.pdb$/i.test(p.file.name))) {
-    message("All protein structures must be .pdb files.", true);
+  if (!proteins.length || busy || fetching) return;
+  if (proteins.some((p) => p.file && !/\.(pdb|cif|mmcif)$/i.test(p.file.name))) {
+    message("All protein structures must be .pdb, .cif or .mmcif files.", true);
     return;
   }
   if (!validateOnly && !toolsReady) {
@@ -340,6 +377,10 @@ async function loadLog() {
 }
 
 $("proteins").addEventListener("change", (event) => setProteins(event.target.files));
+$("fetch-pdb").onclick = addPdb;
+$("pdb-code").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") { event.preventDefault(); addPdb(); }
+});
 $("file-drop").addEventListener("dragover", (event) => { event.preventDefault(); $("file-drop").classList.add("dragging"); });
 $("file-drop").addEventListener("dragleave", () => $("file-drop").classList.remove("dragging"));
 $("file-drop").addEventListener("drop", (event) => { event.preventDefault(); $("file-drop").classList.remove("dragging"); setProteins(event.dataTransfer.files); });

@@ -8,6 +8,7 @@
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/run-selection.js" defer></script>
+  <script src="/static/protein-selection.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -32,10 +33,13 @@
             <label class="field-label" for="run-name">Calculation name <span class="optional">optional</span></label>
             <input id="run-name" type="text" maxlength="120" placeholder="e.g. Wild type vs mutants">
 
-            <div class="section-heading"><h3>Protein structures</h3><span class="field-hint">.pdb · up to 32 files</span></div>
-            <label class="file-drop" id="file-drop" for="proteins"><span class="upload-icon">↥</span><strong>Choose PDB files</strong><span>or drag and drop them here</span><input id="proteins" type="file" accept=".pdb" multiple aria-label="Choose protein PDB files"></label>
+            <div class="section-heading"><h3>Protein structures</h3><span class="field-hint">up to 32 structures</span></div>
+            <label class="field-label" for="pdb-code">Fetch from RCSB PDB</label>
+            <div class="pdb-fetch"><input id="pdb-code" type="text" maxlength="20" placeholder="e.g. 3SQR" autocomplete="off" autocapitalize="characters" aria-describedby="pdb-fetch-hint"><button id="fetch-pdb" class="button secondary" type="button">Add PDB entry</button></div>
+            <p class="field-hint" id="pdb-fetch-hint">Downloads PDBx/mmCIF coordinates once and saves them locally. Fetching a new entry requires internet access.</p>
+            <label class="file-drop" id="file-drop" for="proteins"><span class="upload-icon">↥</span><strong>Add local structures or variants</strong><span>PDB or PDBx/mmCIF · choose files or drop them here</span><input id="proteins" type="file" accept=".pdb,.cif,.mmcif" multiple aria-label="Add local PDB or PDBx mmCIF structures"></label>
             <div id="protein-list" class="protein-list"></div>
-            <p class="field-hint" id="order-hint" hidden>One row per protein. Edit labels or change the row order below.</p>
+            <p class="field-hint" id="order-hint" hidden>Mix fetched entries and local variants. Each row is one structure; edit labels or change the comparison order below.</p>
 
             <div class="section-heading"><h3>pH selection</h3></div>
             <div class="segmented" role="group" aria-label="pH selection mode"><label><input type="radio" name="ph-mode" value="range" checked><span>Range</span></label><label><input type="radio" name="ph-mode" value="explicit"><span>Specific values</span></label></div>

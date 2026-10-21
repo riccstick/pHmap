@@ -26,7 +26,7 @@ from typing import Any
 
 from phmap.desktop_runtime import DesktopRuntime
 from phmap.errors import ConfigurationError
-from phmap.gui.locking import LocalLock
+from phmap.locking import LocalLock
 from phmap.processes import hidden_process_options, terminate_tree
 
 

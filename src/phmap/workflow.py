@@ -27,8 +27,10 @@ from phmap.compose import RenderedTile, compose_grid
 from phmap.configuration import WorkflowOptions as WorkflowOptions
 from phmap.errors import ConfigurationError
 from phmap.manifest import RunManifest, sha256_file, utc_now
-from phmap.models import RunInputs
+from phmap.models import RunInputs, structure_format, structure_suffix
 from phmap.scientific import summarize_opendx, summarize_pqr
+from phmap.structure_formats import mmcif_preparation_info, prepare_mmcif
+from phmap.structures import structure_source
 from phmap.versions import version_line
 from phmap.workspace import RunWorkspace
 
@@ -127,6 +129,7 @@ def _configuration(inputs: RunInputs, options: WorkflowOptions) -> dict[str, Any
                 "id": protein.protein_id,
                 "label": protein.label,
                 "path": str(protein.path),
+                "format": structure_format(protein.path),
                 "ligand": None if protein.ligand is None else str(protein.ligand),
             }
             for protein in inputs.proteins
@@ -204,11 +207,20 @@ class LocalWorkflow:
             staged_proteins: dict[str, tuple[Path, Path | None]] = {}
             for protein in self.inputs.proteins:
                 staged_pdb = workspace.stage_input(
-                    protein.path, name=f"{protein.protein_id}.pdb"
+                    protein.path, name=f"{protein.protein_id}{structure_suffix(protein.path)}"
                 )
                 manifest.record_input(
-                    f"protein:{protein.protein_id}", protein.path, staged_pdb
+                    f"protein:{protein.protein_id}", protein.path, staged_pdb,
+                    source=structure_source(protein.path),
                 )
+                if structure_suffix(protein.path) == ".cif":
+                    prepared = workspace.inputs / f"{protein.protein_id}.backend.pdb"
+                    prepare_mmcif(staged_pdb, prepared)
+                    manifest.record_input(
+                        f"backend-protein:{protein.protein_id}", staged_pdb, prepared,
+                        preparation=mmcif_preparation_info(),
+                    )
+                    staged_pdb = prepared
                 staged_ligand = None
                 if protein.ligand is not None:
                     staged_ligand = workspace.stage_input(
