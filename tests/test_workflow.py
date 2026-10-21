@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from fake_structure import CIF
 from fake_tools import fake_tools as _fake_tools
 from PIL import Image
 
@@ -72,6 +73,31 @@ def test_two_ph_vertical_slice_is_isolated_and_manifested(tmp_path: Path) -> Non
         blue_x = [x for x in range(image.width) if rendered.getpixel((x, 30))[:3] == (0, 0, 240)]
         assert red_x and blue_x
         assert max(red_x) < min(blue_x)
+
+
+@pytest.mark.parametrize("extension", [".cif", ".mmcif", ".CIF", ".MMCIF"])
+def test_mmcif_bytes_are_preserved_and_staged_with_a_backend_compatible_suffix(
+    tmp_path: Path, extension: str,
+) -> None:
+    source = tmp_path / ("variant" + extension)
+    source.write_bytes(CIF)
+    pdb2pqr, apbs, pymol = _fake_tools(tmp_path)
+    result = LocalWorkflow(
+        validate_run_inputs(source, ph_values=["7"]),
+        WorkflowOptions(
+            output_dir=tmp_path / "run", size=64, ray_trace=False,
+            pdb2pqr_executable=pdb2pqr, apbs_executable=apbs, pymol_executable=pymol,
+        ),
+    ).run()
+    assert (result.workspace.inputs / "variant.cif").read_bytes() == CIF
+    assert source.read_bytes() == CIF
+    manifest = json.loads(result.manifest.read_text(encoding="utf-8"))
+    assert manifest["configuration"]["proteins"][0]["format"] == "mmcif"
+    assert manifest["inputs"][0]["original_path"] == str(source)
+    command = manifest["tasks"][0]["stages"][0]["argv"]
+    assert command[-2].endswith("variant.backend.pdb")
+    assert manifest["inputs"][1]["role"] == "backend-protein:variant"
+    assert (result.workspace.inputs / "variant.backend.pdb").is_file()
 
 
 def test_backend_failure_marks_manifest_and_keeps_logs(tmp_path: Path) -> None:

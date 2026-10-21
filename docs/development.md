@@ -32,6 +32,13 @@ mode. Source changes are therefore picked up without reinstalling the package.
 The generated `pixi.lock` should be committed whenever dependencies are first
 resolved or intentionally updated; it is part of the scientific baseline.
 
+Type checking targets the package's Python 3.11 minimum, even though the full
+scientific runtime uses Python 3.12. Gemmi's type stubs transitively import NumPy
+stubs with Python 3.12 syntax. The mypy configuration skips only `numpy` and its
+stub submodules using `follow_imports_for_stubs`; pHmap does not use the NumPy API
+directly. Strict checks of pHmap and normal import checking for other libraries
+remain enabled.
+
 If you are only changing Python code and already provide compatible scientific
 executables yourself, the lightweight alternative is:
 
@@ -133,9 +140,28 @@ Events. GUI and CLI use the same validation models and scientific workflow.
 
 Core execution and presentation settings live in `phmap.configuration`; both
 interfaces validate them before creating a run or launching scientific tools.
-The browser keeps its own upload limits and form defaults. Stage records are
+Browser request models live in `phmap.gui.schemas`, separate from HTTP handlers.
+Both interfaces reject invalid local files, names, and camera settings before
+fetching remote inputs. The browser keeps its own upload limits and form defaults;
+file validation, hashing, and job staging run outside the async request loop. Stage records are
 created when work starts and finalized on success, failure, cancellation, or
 interruption, including timeout and invalid-artifact failures.
+
+Structure inputs accept `.pdb`, `.cif`, and `.mmcif`. `phmap.structures` fetches
+only validated PDB IDs over HTTPS from the official RCSB archive, bounds response
+size/time, parses complete coordinate documents, and verifies cached files against
+their requested ID and source metadata. Shared `phmap.locking` file locks serialize
+each cache entry across threads and processes without blocking unrelated IDs.
+Refreshes stage both content and provenance before publication and restore the
+previous content if provenance publication fails.
+`phmap.structure_formats` uses the pinned Gemmi dependency to validate mmCIF
+and prepare a checked PDB bridge for PDB2PQR 3.7.1; this avoids its native CIF
+reader's missing-header-field failures. Original documents and derived backend
+inputs are hashed and retained separately. A round-trip audit rejects changes to
+atom identities, counts, or coordinates beyond PDB precision before writing the
+bridge. No chain renaming or model merging is implicit.
+The [tutorial](tutorial.md#current-scientific-backend-limits)
+documents the remaining backend representation limits.
 
 The DOM-independent progress controller lives in `static/run-selection.js`.
 Its regression checks cover rapid selection changes, stale responses/events,
@@ -145,6 +171,7 @@ or run pHmap. Run just the controller checks with:
 
 ```console
 node tests/frontend/run-selection.mjs
+node tests/frontend/protein-selection.mjs
 ```
 
 History reads lightweight summaries, while detailed run views discover images

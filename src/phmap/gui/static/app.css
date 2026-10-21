@@ -52,6 +52,10 @@ input::placeholder { color:#a4aea7; }
 input:focus,select:focus { outline:2px solid #c4ddd0; outline-offset:1px; border-color:#91b9a4; }
 .section-heading { display:flex; align-items:center; justify-content:space-between; margin:22px 0 10px; }
 .field-hint { font-size:10px; line-height:1.5; color:#8a968e; margin:7px 0; overflow-wrap:anywhere; }
+.pdb-fetch { display:flex; gap:8px; align-items:stretch; }
+.pdb-fetch input { flex:1; }
+.pdb-fetch .button { flex-shrink:0; padding:8px 10px; font-size:11px; }
+#pdb-fetch-hint { margin-bottom:12px; }
 .file-drop { min-height:133px; border:1px dashed #bccfc0; border-radius:7px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; position:relative; background:#f7faf5; cursor:pointer; }
 .file-drop:hover,.file-drop.dragging { background:#eef5eb; border-color:#5f9278; }
 .file-drop input { position:absolute; opacity:0; width:100%; height:100%; inset:0; cursor:pointer; }

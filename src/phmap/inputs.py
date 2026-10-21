@@ -26,7 +26,9 @@ from .models import (
     slugify_protein_id,
     validate_protein_id,
     validate_protein_label,
+    validate_structure_path,
 )
+from .structure_formats import validate_mmcif
 
 PHValuesInput: TypeAlias = str | Iterable[DecimalLike]
 PHRangeInput: TypeAlias = str | Iterable[DecimalLike] | PHRange
@@ -237,7 +239,7 @@ def _optional_values(
     )
     if len(supplied) != count:
         raise InputValidationError(
-            f"{description} count ({len(supplied)}) must match PDB count ({count})"
+            f"{description} count ({len(supplied)}) must match structure count ({count})"
         )
     return supplied
 
@@ -264,6 +266,37 @@ def _unique_label(base: str, used: set[str]) -> str:
     return candidate
 
 
+def validate_protein_names(
+    count: int, *, protein_ids: Iterable[str | None] | None = None,
+    labels: Iterable[str | None] | None = None,
+) -> tuple[tuple[str | None, ...], tuple[str | None, ...]]:
+    """Validate names/counts without requiring downloaded coordinate files."""
+
+    ids = _optional_values(protein_ids, count, description="protein ID")
+    names = _optional_values(labels, count, description="protein label")
+    for values, validator, description in (
+        (ids, validate_protein_id, "IDs"), (names, validate_protein_label, "labels"),
+    ):
+        seen: set[str] = set()
+        for value in values:
+            if value is not None:
+                folded = validator(value).casefold()
+                if folded in seen:
+                    raise InputValidationError(f"explicit protein {description} must be unique")
+                seen.add(folded)
+    return ids, names
+
+
+def validate_structure_files(paths: Iterable[PathLike]) -> tuple[Path, ...]:
+    """Check local files before any archive downloads are attempted."""
+
+    result = tuple(validate_structure_path(path) for path in paths)
+    for path in result:
+        if path.suffix.lower() != ".pdb":
+            validate_mmcif(path)
+    return result
+
+
 def build_protein_inputs(
     pdb_paths: PDBPathsInput,
     *,
@@ -271,7 +304,7 @@ def build_protein_inputs(
     labels: Iterable[str | None] | None = None,
     ligand: PathLike | None = None,
 ) -> tuple[ProteinInput, ...]:
-    """Validate PDBs and create proteins with stable, unique IDs and labels.
+    """Validate structures and create proteins with stable, unique IDs and labels.
 
     A single optional MOL2 ligand is associated with every protein, matching
     the original local workflow.  Explicit IDs/labels are never silently
@@ -284,33 +317,17 @@ def build_protein_inputs(
         else tuple(pdb_paths)
     )
     if not raw_paths:
-        raise InputValidationError("at least one PDB input is required")
-    paths = tuple(validate_pdb_path(path) for path in raw_paths)
-    supplied_ids = _optional_values(protein_ids, len(paths), description="protein ID")
-    supplied_labels = _optional_values(labels, len(paths), description="protein label")
+        raise InputValidationError("at least one protein structure is required")
+    paths = validate_structure_files(raw_paths)
+    supplied_ids, supplied_labels = validate_protein_names(
+        len(paths), protein_ids=protein_ids, labels=labels,
+    )
     ligand_path = None if ligand is None else validate_mol2_path(ligand)
 
     # Reserve explicit names first so generated names yield to user choices,
     # independent of argument ordering.
-    used_ids: set[str] = set()
-    for protein_id in supplied_ids:
-        if protein_id is None:
-            continue
-        validated = validate_protein_id(protein_id)
-        folded = validated.casefold()
-        if folded in used_ids:
-            raise InputValidationError("explicit protein IDs must be unique")
-        used_ids.add(folded)
-
-    used_labels: set[str] = set()
-    for label in supplied_labels:
-        if label is None:
-            continue
-        validated = validate_protein_label(label)
-        folded = validated.casefold()
-        if folded in used_labels:
-            raise InputValidationError("explicit protein labels must be unique")
-        used_labels.add(folded)
+    used_ids = {value.casefold() for value in supplied_ids if value is not None}
+    used_labels = {value.casefold() for value in supplied_labels if value is not None}
 
     resolved_ids = []
     resolved_labels = []

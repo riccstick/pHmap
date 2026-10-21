@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from pathlib import Path
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 PathLike: TypeAlias = str | os.PathLike[str]
 DecimalLike: TypeAlias = str | int | float | Decimal
@@ -26,6 +26,7 @@ MAX_PH = Decimal("14")
 MAX_PH_POINTS = 10_000
 MAX_PROTEIN_ID_LENGTH = 64
 MAX_PROTEIN_LABEL_LENGTH = 128
+STRUCTURE_SUFFIXES = (".pdb", ".cif", ".mmcif")
 
 _SAFE_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 _UNSAFE_LABEL_CHARACTERS = frozenset('<>:"/\\|?*')
@@ -179,19 +180,41 @@ def safe_protein_label(value: str, *, fallback: str = "protein") -> str:
     return validate_protein_label(normalized)
 
 
-def _validated_file(path: PathLike, *, suffix: str, description: str) -> Path:
+def _validated_file(
+    path: PathLike, *, suffix: str | tuple[str, ...], description: str,
+) -> Path:
     if isinstance(path, bool) or not isinstance(path, (str, os.PathLike)):
         raise InputValidationError(f"{description} path must be a path-like value")
     candidate = Path(path).expanduser()
-    if candidate.suffix.lower() != suffix:
+    suffixes = (suffix,) if isinstance(suffix, str) else suffix
+    if candidate.suffix.lower() not in suffixes:
         raise InputValidationError(
-            f"{description} must have a {suffix} extension; got {candidate.name!r}"
+            f"{description} must have a {' or '.join(suffixes)} extension; got {candidate.name!r}"
         )
     if not candidate.exists():
         raise InputValidationError(f"{description} does not exist: {candidate}")
     if not candidate.is_file():
         raise InputValidationError(f"{description} is not a regular file: {candidate}")
     return candidate.resolve()
+
+
+def validate_structure_path(path: PathLike) -> Path:
+    """Accept legacy PDB and text PDBx/mmCIF structures without converting them."""
+
+    return _validated_file(path, suffix=STRUCTURE_SUFFIXES, description="Protein structure")
+
+
+def structure_format(path: PathLike) -> Literal["pdb", "mmcif"]:
+    suffix = Path(path).suffix.lower()
+    if suffix not in STRUCTURE_SUFFIXES:
+        raise InputValidationError("Protein structures must be .pdb, .cif, or .mmcif files")
+    return "pdb" if suffix == ".pdb" else "mmcif"
+
+
+def structure_suffix(path: PathLike) -> str:
+    """Use one canonical suffix when staging either accepted mmCIF extension."""
+
+    return ".pdb" if structure_format(path) == "pdb" else ".cif"
 
 
 @dataclass(frozen=True, init=False)
@@ -299,7 +322,7 @@ class ProteinInput:
         label: str | None = None,
         ligand: PathLike | None = None,
     ) -> None:
-        validated_path = _validated_file(path, suffix=".pdb", description="PDB input")
+        validated_path = validate_structure_path(path)
         validated_id = (
             slugify_protein_id(validated_path.stem)
             if protein_id is None
@@ -339,7 +362,7 @@ class RunInputs:
     ) -> None:
         parsed_proteins = tuple(proteins)
         if not parsed_proteins:
-            raise InputValidationError("at least one PDB input is required")
+            raise InputValidationError("at least one protein structure is required")
         if not all(isinstance(protein, ProteinInput) for protein in parsed_proteins):
             raise InputValidationError("proteins must contain only ProteinInput objects")
 

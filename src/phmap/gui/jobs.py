@@ -18,12 +18,12 @@ from typing import Any
 from phmap.configuration import WorkflowOptions
 from phmap.errors import ConfigurationError
 from phmap.json_state import read_json, write_json
+from phmap.locking import LocalLock
 from phmap.manifest import finish_task_state, utc_now
-from phmap.models import RunInputs
+from phmap.models import RunInputs, structure_suffix
 from phmap.processes import hidden_process_options, terminate_tree
+from phmap.structures import copy_structure_source
 from phmap.workspace import default_run_id
-
-from .locking import LocalLock
 
 TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
@@ -106,8 +106,9 @@ class JobManager:
             destination.mkdir()
             proteins = []
             for protein in inputs.proteins:
-                pdb = destination / f"{protein.protein_id}.pdb"
+                pdb = destination / f"{protein.protein_id}{structure_suffix(protein.path)}"
                 shutil.copy2(protein.path, pdb)
+                copy_structure_source(protein.path, pdb)
                 ligand = None
                 if protein.ligand is not None:
                     ligand = destination / "ligand.mol2"

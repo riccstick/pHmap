@@ -89,14 +89,22 @@ class RunManifest:
         self.data["tools"][name] = details
         self.write()
 
-    def record_input(self, role: str, original: Path, staged: Path) -> None:
+    def record_input(
+        self, role: str, original: Path, staged: Path, *, source: dict[str, Any] | None = None,
+        preparation: dict[str, str] | None = None,
+    ) -> None:
+        digest = sha256_file(staged)
+        if source and source.get("sha256") != digest:
+            source = None  # A concurrent cache refresh must not misattribute staged bytes.
         self.data["inputs"].append(
             {
                 "role": role,
                 "original_path": str(original.resolve()),
                 "staged_path": str(staged),
-                "sha256": sha256_file(staged),
+                "sha256": digest,
                 "size": staged.stat().st_size,
+                **({"source": source} if source else {}),
+                **({"preparation": preparation} if preparation else {}),
             }
         )
         self.write()

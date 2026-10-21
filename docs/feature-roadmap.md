@@ -5,7 +5,8 @@ does not yet replace every feature of the Bash program. The most important
 remaining capabilities are activity plots, editing figures without repeating
 calculations, advanced surface controls, and publication styling.
 
-This is the feature snapshot for 8 October 2026. Priorities below are proposed
+The legacy audit dates from 8 October 2026; available features were updated
+on 21 October 2026. Priorities below are proposed
 implementation order, not committed release dates. The legacy executable code
 was removed on that date after this feature audit. Missing and partial features
 remain deferred Python work; their removal from the old implementation does not
@@ -13,7 +14,8 @@ make them available in the new app.
 
 ## Features available today
 
-Both the CLI and local browser interface support multiple PDB files, ordered
+Both the CLI and local browser interface support PDB and PDBx/mmCIF files,
+RCSB PDB downloads by ID, mixed reference/variant comparisons, ordered
 pH values or an inclusive range, an imported 18-number PyMOL camera view, and
 an experimental shared MOL2 ligand. The workflow runs PDB2PQR with PROPKA,
 APBS, and headless PyMOL, then composes an ordered PNG grid in Python.
@@ -23,6 +25,9 @@ The CLI accepts custom ramp colors and a foreground color; the browser form
 currently offers two ramp presets and three background choices. Runs retain
 scientific artifacts, logs, input and output hashes, numerical summaries,
 tool versions, and a JSON manifest.
+Fetched structures additionally retain download provenance and verified local
+cache copies. Original mmCIF files and the checked scientific-backend input
+are saved separately; see the [current format limits](tutorial.md#current-scientific-backend-limits).
 
 The GUI adds uploads, editable protein labels and row order, validation,
 progress, a serial queue, cancellation, history, and downloads. A desktop

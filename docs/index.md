@@ -23,10 +23,12 @@ in a development environment; see [local development](development.md).
 
 ## What it does
 
-Given one or more PDB files and pH values, pHmap prepares protonation states,
+Given PDB/PDBx files or a fetched PDB entry ID and pH values, pHmap prepares protonation states,
 calculates electrostatic potentials, renders protein surfaces, and assembles
 the resulting panels into an ordered image. Each run keeps its logs,
 intermediate scientific files, output, and a provenance manifest together.
+You can compare a fetched reference structure with uploaded variant files;
+see the [PDBx/mmCIF tutorial](tutorial.md#pdbxmmcif-and-pdb-ids).
 
 The [feature roadmap](feature-roadmap.md) describes current capabilities and
 planned additions.

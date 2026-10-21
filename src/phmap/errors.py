@@ -22,3 +22,11 @@ class BackendError(PHMapError):
 class ArtifactError(PHMapError):
     """Raised when an expected workflow artifact is absent or invalid."""
 
+
+class StructureFetchError(PHMapError):
+    """An RCSB structure could not be downloaded or safely cached."""
+
+
+class StructureNotFoundError(StructureFetchError):
+    """The requested structure is not available from RCSB PDB."""
+
