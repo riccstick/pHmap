@@ -32,6 +32,13 @@ mode. Source changes are therefore picked up without reinstalling the package.
 The generated `pixi.lock` should be committed whenever dependencies are first
 resolved or intentionally updated; it is part of the scientific baseline.
 
+Type checking targets the package's Python 3.11 minimum, even though the full
+scientific runtime uses Python 3.12. Gemmi's type stubs transitively import NumPy
+stubs with Python 3.12 syntax. The mypy configuration skips only `numpy` and its
+stub submodules using `follow_imports_for_stubs`; pHmap does not use the NumPy API
+directly. Strict checks of pHmap and normal import checking for other libraries
+remain enabled.
+
 If you are only changing Python code and already provide compatible scientific
 executables yourself, the lightweight alternative is:
 
