@@ -94,6 +94,51 @@ def test_gui_upload_validation_run_history_and_downloads(client: TestClient) -> 
     assert '"status":"completed"' in events.text
 
 
+def test_gui_advanced_settings_reach_validation_worker_manifest_and_script(
+    client: TestClient,
+) -> None:
+    settings = {
+        "surface_mode": 4, "surface_solvent": True,
+        "surface_ramp_above_mode": False, "ligand_representation": None,
+    }
+    validation = _submit(client, endpoint="/api/validate", **settings)
+    assert validation.status_code == 200, validation.text
+    assert settings.items() <= validation.json()["render"].items()
+    submitted = _submit(client, **settings)
+    assert submitted.status_code == 202, submitted.text
+    run_id = submitted.json()["run_id"]
+    data = _wait(client, run_id, {"completed", "failed"})
+    assert data["status"] == "completed", data["error"]
+    manifest = client.get(f"/api/runs/{run_id}/files/manifest.json").json()
+    assert settings.items() <= manifest["configuration"]["render"].items()
+    script_path = next(Path(data["directory"]).rglob("render.pml"))
+    script = script_path.read_text(encoding="utf-8")
+    assert "set surface_mode, 4\n" in script
+    assert "set surface_solvent, 1\n" in script
+    assert "set surface_ramp_above_mode, 0\n" in script
+    assert "molecule and hetatm" not in script
+
+
+@pytest.mark.parametrize("settings", [
+    {"surface_mode": -1}, {"surface_mode": 5}, {"surface_mode": 1.5},
+    {"surface_mode": True}, {"surface_solvent": "false"}, {"surface_solvent": 1},
+    {"surface_ramp_above_mode": "off"}, {"ligand_representation": "sticks; quit"},
+    {"ligand_representation": "none"},
+])
+def test_gui_rejects_invalid_advanced_settings_before_fetching_or_queueing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, settings: dict,
+) -> None:
+    fetch = Mock(side_effect=AssertionError("Must not fetch"))
+    monkeypatch.setattr("phmap.gui.app.fetch_structure", fetch)
+    response = client.post(
+        "/api/runs", headers=_token(client),
+        data={"settings": json.dumps({"structures": [{"pdb_id": "3SQR"}], **settings})},
+    )
+    assert response.status_code == 422, response.text
+    assert client.get("/api/runs").json() == []
+    fetch.assert_not_called()
+
+
 def test_gui_rejects_cross_origin_writes_invalid_settings_and_camera(
     client: TestClient,
 ) -> None:

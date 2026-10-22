@@ -5,6 +5,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from phmap.backends.pymol import LigandRepresentation
 from phmap.configuration import WorkflowOptions
 from phmap.inputs import parse_ph_selection, validate_protein_names
 from phmap.models import InputValidationError
@@ -54,12 +55,19 @@ class RunSettings(BaseModel):
     ramp_colors: tuple[str, str, str] = ("red", "white", "blue")
     force_field: Literal["PARSE", "AMBER", "CHARMM"] = "PARSE"
     ray_trace: bool = True
+    surface_mode: int = Field(default=0, ge=0, le=4, strict=True)
+    surface_solvent: bool = Field(default=False, strict=True)
+    surface_ramp_above_mode: bool = Field(default=True, strict=True)
+    ligand_representation: LigandRepresentation | None = "sticks"
 
     def options(self, runs_dir: Path) -> WorkflowOptions:
         return WorkflowOptions(
             runs_dir=runs_dir, size=self.size, dpi=self.dpi, potential_level=self.level,
             ramp_colors=self.ramp_colors, background=self.background,
             foreground=self.foreground, force_field=self.force_field, ray_trace=self.ray_trace,
+            surface_mode=self.surface_mode, surface_solvent=self.surface_solvent,
+            surface_ramp_above_mode=self.surface_ramp_above_mode,
+            ligand_representation=self.ligand_representation,
         )
 
     def selected_rows(self, upload_count: int) -> list[StructureSelection]:

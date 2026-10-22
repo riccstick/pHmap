@@ -119,3 +119,52 @@ preparation or force-field parameters, just as with PDB inputs.
 If fetching fails, check the entry code, internet access, VPN/proxy, and trusted
 certificates—or download the structure manually and add it as a local file.
 Do not disable certificate verification to work around company-network errors.
+
+## Advanced surface and ligand rendering
+
+Open **Advanced surface & ligand rendering** below the figure settings in the
+local browser interface. These settings apply to every protein/pH tile and are
+saved under `configuration.render` in `manifest.json`, including default values.
+Queued GUI jobs retain the same settings when passed to the CLI worker.
+
+The equivalent CLI controls are:
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `--surface-mode 0..4` | `0` | Choose which atoms contribute to the surface. |
+| `--surface-solvent` / `--no-surface-solvent` | Off | Switch between solvent-accessible and solvent-excluded geometry. |
+| `--surface-ramp-above-mode` / `--no-surface-ramp-above-mode` | On | Control PyMOL's above-surface potential sampling. |
+| `--ligand-representation sticks\|lines\|dots\|spheres\|none` | `sticks` | Choose an additional representation for retained HETATM atoms. |
+
+Surface modes follow [PyMOL's definitions](https://github.com/schrodinger/pymol-open-source/blob/master/layer2/RepSurface.h):
+
+- **0:** respect atom flags (normally excludes HETATM atoms).
+- **1:** include all atoms.
+- **2:** include heavy atoms only (exclude hydrogens).
+- **3:** include surface-visible atoms only.
+- **4:** include surface-visible heavy atoms only.
+
+pHmap initially shows the whole molecule's surface, so modes 3 and 4 do not add
+a custom atom-selection interface. The two switches remain independent:
+[PyMOL's APBS interface](https://github.com/schrodinger/pymol-open-source/blob/v3.1.0/data/startup/apbs_gui/__init__.py)
+normally disables above-surface sampling for solvent-accessible geometry.
+For that combination, use:
+
+```console
+pixi run phmap run example/mutant2.pdb --ph-range 3 8 1 \
+  --surface-mode 1 --surface-solvent --no-surface-ramp-above-mode \
+  --ligand-representation spheres
+```
+
+These options do **not** change protonation, APBS calculation parameters, or
+the force field. The ligand representation applies to `HETATM` atoms retained
+in the prepared PQR, not specifically to the file uploaded as a shared ligand.
+Missing or discarded ligands cannot be recovered by changing representation.
+`none` (GUI: **Hidden**) suppresses the extra representation; it does not remove
+those atoms from the calculation or an inclusive surface.
+
+Shared MOL2 parameterization remains experimental. In particular, the legacy
+`example/protein.pdb` plus `example/ligand.mol2` FAD example currently fails in
+PDB2PQR 3.7.1's ligand parameter assignment (`ValueError: 'P' is not in list`),
+before rendering starts. The native rendering smoke uses a separate prepared
+synthetic PQR fixture; it does not validate general ligand parameterization.

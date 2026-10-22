@@ -56,8 +56,8 @@ forms; the table groups both forms together.
 | `--grid_linewidth`, `--grid_place`, `--grid_font_size` | Missing | Control activity ticks, inward or outward placement, and scale labels. |
 | `--update_axis` | Missing | Recompose saved tiles without PDB2PQR, APBS, or PyMOL. |
 | `--update_rendering` | Missing | Render saved PQR and DX artifacts again without PDB2PQR or APBS. |
-| `--pymol_surface_mode`, `--pymol_surface_solvent`, `--pymol_surface_above_mode` | Partial | Renderer supports them; workflow, manifest configuration, CLI, and GUI do not expose them. |
-| `--pymol_ligand_representation` | Partial | Renderer supports sticks, lines, dots, spheres, or hiding the representation; application uses the default. |
+| `--pymol_surface_mode`, `--pymol_surface_solvent`, `--pymol_surface_above_mode` | Available | Use `--surface-mode`, `--surface-solvent`, and `--surface-ramp-above-mode`; also exposed in the GUI and saved in manifests. |
+| `--pymol_ligand_representation` | Available | Use `--ligand-representation sticks\|lines\|dots\|spheres\|none` or the GUI selector. |
 | `--pymol_ramp` | Partial | `CompositionSettings.show_colorbar` exists; application always shows the shared legend. |
 | `--digits` | Missing as a display control | Decimal pH values are preserved, but there is no separate label precision option. |
 | `--axis_font`, `--axis_font_size`, `--axis_font_weight`, `--axis_font_stretch`, `--axis_font_style` | Partial | Compositor has a font size setting, but the application does not expose it; font family and variants are missing. |
@@ -111,24 +111,21 @@ current app.
 
 ## Advanced surface and ligand controls
 
-Priority: high; a relatively small wiring task compared with activity plotting.
-Users should be able to select surface modes 0 through 4, solvent-accessible
-surface display, ramp-above mode, and ligand representation.
+Implemented in the CLI and local GUI. Surface modes 0 through 4,
+solvent-accessible display, ramp-above mode, and sticks/lines/dots/spheres/hidden
+ligand representations pass through the existing workflow and renderer without
+arbitrary user PML. Current defaults are preserved.
 
-`PyMOLRenderOptions` and `build_pymol_script` already implement these controls.
-Extend `WorkflowOptions`, manifest configuration, CLI parsing, GUI settings,
-and worker argument construction to pass them through consistently. Avoid
-creating a second renderer or accepting arbitrary user PML.
+Validation rejects invalid modes/representations before calculation. Regression
+checks cover all values, GUI serialization, worker arguments, generated scripts,
+and manifest configuration. Desktop CI runs `pixi run --locked smoke-rendering`
+against native APBS/PyMOL using protein-only and ligand-bearing prepared PQR
+inputs. The synthetic fixture validates rendering, not ligand parameterization.
 
-Acceptance criteria:
-
-- Preserve the current default rendering when no new controls are selected.
-- All settings can be selected in CLI and GUI and survive worker serialization.
-- Invalid modes and representations fail during validation, before calculation.
-- Script tests check every mode and representation; scientific smoke fixtures
-  include a protein and a representative ligand-bearing input.
-- Record these settings in manifests and include them in future render reuse
-  decisions. A shared ligand remains explicitly experimental until validated.
+All settings are recorded in `configuration.render`; future render reuse must
+include them in its compatibility decisions. Shared MOL2 input remains
+experimental: the legacy FAD example fails in PDB2PQR 3.7.1's parameter assignment.
+See the [rendering tutorial](tutorial.md#advanced-surface-and-ligand-rendering).
 
 ## Publication styling and figure editing
 
@@ -223,7 +220,7 @@ later; the legacy final figure was PNG, so they are not parity requirements.
 
 ## Suggested implementation order
 
-1. Expose existing advanced render controls and legend/font-size settings.
+1. Expose legend/font-size settings (advanced surface/ligand controls are implemented).
 2. Add the activity model, import validation, and Python lollipop composition.
 3. Add publication styling and safe composition from an existing run.
 4. Add rendering from verified PQR/DX artifacts, then explicit selective resume.

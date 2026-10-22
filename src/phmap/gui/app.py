@@ -247,6 +247,7 @@ def create_app(
                         if settings.ph_mode == "range" else None,
                     )
                     summary = await run_in_threadpool(_summary, inputs)
+                    summary["render"] = options.render_configuration()
                     if validate_only:
                         return {"valid": True, **summary}
                     run_id = await run_in_threadpool(

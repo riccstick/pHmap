@@ -44,6 +44,11 @@ def build_worker_argv(inputs: RunInputs, options: WorkflowOptions) -> list[str]:
         "--level", str(options.potential_level), "--foreground", options.foreground,
         "--force-field", options.force_field, "--timeout", str(options.timeout),
         "--ramp-colors", *options.ramp_colors,
+        "--surface-mode", str(options.surface_mode),
+        "--surface-solvent" if options.surface_solvent else "--no-surface-solvent",
+        "--surface-ramp-above-mode" if options.surface_ramp_above_mode
+        else "--no-surface-ramp-above-mode",
+        "--ligand-representation", options.ligand_representation or "none",
         "--pdb2pqr-executable", str(options.pdb2pqr_executable),
         "--apbs-executable", str(options.apbs_executable),
         "--pymol-executable", str(options.pymol_executable),
@@ -135,6 +140,7 @@ class JobManager:
                     ],
                     "ph_values": [str(ph) for ph in inputs.ph_values],
                     "ph_mode": inputs.ph_mode.value,
+                    "render": options.render_configuration(),
                 },
             }
             self._save(run_id)

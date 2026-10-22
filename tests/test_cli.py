@@ -91,6 +91,21 @@ def test_cli_rejects_all_invalid_ids_before_any_download(
     assert "Provide local structure files" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("arguments", [
+    ["--surface-mode", "-1"], ["--surface-mode", "5"], ["--surface-mode", "2.0"],
+    ["--ligand-representation", "cartoon"], ["--ligand-representation", "sticks; quit"],
+])
+def test_cli_rejects_invalid_advanced_settings_before_fetching(
+    monkeypatch: pytest.MonkeyPatch, arguments: list[str],
+) -> None:
+    fetch = Mock(side_effect=AssertionError("Must not fetch"))
+    monkeypatch.setattr("phmap.cli.fetch_structure", fetch)
+    with pytest.raises(SystemExit) as exc:
+        main(["run", "--pdb-id", "3sqr", "--ph", "7", *arguments])
+    assert exc.value.code == 2
+    fetch.assert_not_called()
+
+
 @pytest.mark.parametrize("invalid", ["label", "count", "view", "ligand", "path", "cif"])
 def test_cli_preflights_local_inputs_and_metadata_before_downloading(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: str,

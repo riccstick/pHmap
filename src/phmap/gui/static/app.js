@@ -180,6 +180,11 @@ function formData() {
     foreground: background === "black" ? "white" : "black",
     ramp_colors: $("ramp").value.split(","), force_field: $("force-field").value,
     ray_trace: $("ray").checked,
+    surface_mode: Number($("surface-mode").value),
+    surface_solvent: $("surface-solvent").checked,
+    surface_ramp_above_mode: $("surface-ramp-above-mode").checked,
+    ligand_representation: $("ligand-representation").value === "none"
+      ? null : $("ligand-representation").value,
   };
   const data = new FormData();
   data.append("settings", JSON.stringify(settings));

@@ -87,6 +87,20 @@ Then run the same two-pH input through the local pipeline:
 pixi run smoke
 ```
 
+Also exercise all five surface modes and all ligand representations using
+native APBS/PyMOL with a small prepared protein/ligand PQR fixture:
+
+```console
+pixi run --locked smoke-rendering
+```
+
+This checks a protein-only render plus five ligand-bearing renders and retains
+PNGs, PML, logs, and effective settings under `runs/Advanced rendering smoke/`.
+It runs in desktop CI on all four target platforms. The fixture has synthetic
+charges/radii and isolates rendering from experimental MOL2 assignment; it is
+not a force-field or ligand-parameterization reference. See
+`tests/fixtures/rendering/README.md` for its scope.
+
 Equivalent direct invocation:
 
 ```console
@@ -172,6 +186,7 @@ or run pHmap. Run just the controller checks with:
 ```console
 node tests/frontend/run-selection.mjs
 node tests/frontend/protein-selection.mjs
+node tests/frontend/render-settings.mjs
 ```
 
 History reads lightweight summaries, while detailed run views discover images

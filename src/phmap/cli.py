@@ -101,6 +101,23 @@ def _add_input_arguments(parser: argparse.ArgumentParser, *, include_run: bool) 
         parser.add_argument("--force-field", default="PARSE")
         parser.add_argument("--timeout", type=float, default=1800.0, metavar="SECONDS")
         parser.add_argument("--no-ray", action="store_true", help="disable PyMOL ray tracing")
+        parser.add_argument(
+            "--surface-mode", type=int, choices=range(5), default=0,
+            help="PyMOL atom inclusion mode, 0–4 (default: 0, respect atom flags)",
+        )
+        parser.add_argument(
+            "--surface-solvent", action=argparse.BooleanOptionalAction, default=False,
+            help="show the solvent-accessible surface instead of solvent-excluded",
+        )
+        parser.add_argument(
+            "--surface-ramp-above-mode", action=argparse.BooleanOptionalAction, default=True,
+            help="sample potential above the surface (default: enabled)",
+        )
+        parser.add_argument(
+            "--ligand-representation", choices=("sticks", "lines", "dots", "spheres", "none"),
+            default="sticks",
+            help="display retained HETATM atoms; none hides the extra representation",
+        )
         parser.add_argument("--pdb2pqr-executable", default="pdb2pqr30")
         parser.add_argument("--apbs-executable", default="apbs")
         parser.add_argument("--pymol-executable", default="pymol")
@@ -229,6 +246,11 @@ def _run(args: argparse.Namespace) -> int:
         force_field=args.force_field,
         timeout=args.timeout,
         ray_trace=not args.no_ray,
+        surface_mode=args.surface_mode,
+        surface_solvent=args.surface_solvent,
+        surface_ramp_above_mode=args.surface_ramp_above_mode,
+        ligand_representation=None if args.ligand_representation == "none"
+        else args.ligand_representation,
         pdb2pqr_executable=args.pdb2pqr_executable,
         apbs_executable=args.apbs_executable,
         pymol_executable=args.pymol_executable,

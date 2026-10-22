@@ -8,7 +8,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from .artifacts import require_nonempty_file, require_png
 from .errors import BackendValidationError
@@ -16,6 +16,7 @@ from .runner import CommandResult, CommandRunner, VersionInfo, discover_executab
 
 _COLOR_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_]*\Z|0x[0-9A-Fa-f]{6}\Z")
 _LIGAND_REPRESENTATIONS = {"sticks", "lines", "dots", "spheres"}
+LigandRepresentation: TypeAlias = Literal["sticks", "lines", "dots", "spheres"]
 
 
 def _pml_string(value: str | Path) -> str:
@@ -53,9 +54,7 @@ class PyMOLRenderOptions:
     surface_mode: int = 0
     surface_solvent: bool = False
     surface_ramp_above_mode: bool = True
-    ligand_representation: Literal["sticks", "lines", "dots", "spheres"] | None = (
-        "sticks"
-    )
+    ligand_representation: LigandRepresentation | None = "sticks"
     view: tuple[float, ...] | None = None
     ray_trace: bool = True
 
@@ -84,11 +83,21 @@ class PyMOLRenderOptions:
         for color in self.ramp_colors:
             _validate_color(color)
         _validate_color(self.background)
-        if isinstance(self.surface_mode, bool) or self.surface_mode not in range(5):
+        if (
+            isinstance(self.surface_mode, bool)
+            or not isinstance(self.surface_mode, int)
+            or self.surface_mode not in range(5)
+        ):
             raise BackendValidationError("PyMOL surface_mode must be 0, 1, 2, 3, or 4")
+        for name in ("surface_solvent", "surface_ramp_above_mode"):
+            if not isinstance(getattr(self, name), bool):
+                raise BackendValidationError(f"PyMOL {name} must be true or false")
         if (
             self.ligand_representation is not None
-            and self.ligand_representation not in _LIGAND_REPRESENTATIONS
+            and (
+                not isinstance(self.ligand_representation, str)
+                or self.ligand_representation not in _LIGAND_REPRESENTATIONS
+            )
         ):
             raise BackendValidationError("Unsupported PyMOL ligand representation")
         if self.view is not None:

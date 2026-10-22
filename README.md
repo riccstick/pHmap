@@ -151,6 +151,20 @@ fresh archive copies. Original mmCIF files are retained; the pinned scientific
 backend uses an audited PDB intermediate with documented size/identifier limits.
 See the [structure tutorial](docs/tutorial.md#pdbxmmcif-and-pdb-ids).
 
+Advanced surface and ligand display options are available in the browser's
+**Advanced surface & ligand rendering** section and in the CLI:
+
+```console
+pixi run phmap run example/mutant2.pdb --ph-range 3 8 1 \
+  --surface-mode 1 --surface-solvent --no-surface-ramp-above-mode \
+  --ligand-representation sticks
+```
+
+Defaults remain unchanged. Choose `sticks`, `lines`, `dots`, `spheres`, or `none`
+for the extra HETATM representation. These are display controls, not ligand
+parameterization; the shared MOL2 input remains experimental. See the
+[rendering tutorial](docs/tutorial.md#advanced-surface-and-ligand-rendering).
+
 ## Python-only development
 
 If compatible PDB2PQR, APBS, and PyMOL executables are already available on

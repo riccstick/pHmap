@@ -3,10 +3,35 @@ from pathlib import Path
 
 import pytest
 
+from phmap.cli import build_parser
 from phmap.configuration import WorkflowOptions
 from phmap.errors import ConfigurationError
-from phmap.gui.jobs import JobManager, write_json
+from phmap.gui.jobs import JobManager, build_worker_argv, write_json
 from phmap.inputs import validate_run_inputs
+
+
+@pytest.mark.parametrize("mode", range(5))
+@pytest.mark.parametrize("representation", ["sticks", "lines", "dots", "spheres", None])
+@pytest.mark.parametrize("solvent,above", [
+    (False, True), (True, False), (True, True), (False, False),
+])
+def test_advanced_render_settings_survive_worker_serialization(
+    tmp_path: Path, mode: int, representation, solvent: bool, above: bool,
+) -> None:  # type: ignore[no-untyped-def]
+    path = tmp_path / "input.pdb"
+    path.write_text("ATOM\n", encoding="utf-8")
+    options = WorkflowOptions(
+        output_dir=tmp_path / "run", surface_mode=mode, surface_solvent=solvent,
+        surface_ramp_above_mode=above, ligand_representation=representation,
+    )
+    inputs = validate_run_inputs(path, ph_values=["7"])
+    arguments = build_worker_argv(inputs, options)
+    # Workers run `python -m phmap`; parse their arguments with the actual CLI.
+    parsed = build_parser().parse_args(arguments[3:])
+    assert parsed.surface_mode == mode
+    assert parsed.surface_solvent is solvent
+    assert parsed.surface_ramp_above_mode is above
+    assert parsed.ligand_representation == (representation or "none")
 
 
 def test_cancelled_waiting_jobs_immediately_free_queue_capacity(

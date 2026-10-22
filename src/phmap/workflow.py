@@ -137,15 +137,7 @@ def _configuration(inputs: RunInputs, options: WorkflowOptions) -> dict[str, Any
         "ph_values": [str(ph) for ph in inputs.ph_values],
         "ph_mode": inputs.ph_mode.value,
         "view": None if inputs.view is None else list(inputs.view.values),
-        "render": {
-            "size": options.size,
-            "dpi": options.dpi,
-            "potential_level": options.potential_level,
-            "ramp_colors": list(options.ramp_colors),
-            "background": options.background,
-            "foreground": options.foreground,
-            "ray_trace": options.ray_trace,
-        },
+        "render": options.render_configuration(),
         "scientific": {
             "force_field": options.force_field,
             "titration_state_method": "propka",
