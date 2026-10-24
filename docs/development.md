@@ -87,6 +87,20 @@ Then run the same two-pH input through the local pipeline:
 pixi run smoke
 ```
 
+Also exercise all five surface modes and all ligand representations using
+native APBS/PyMOL with a small prepared protein/ligand PQR fixture:
+
+```console
+pixi run --locked smoke-rendering
+```
+
+This checks a protein-only render plus five ligand-bearing renders and retains
+PNGs, PML, logs, and effective settings under `runs/Advanced rendering smoke/`.
+It runs in desktop CI on all four target platforms. The fixture has synthetic
+charges/radii and isolates rendering from experimental MOL2 assignment; it is
+not a force-field or ligand-parameterization reference. See
+`tests/fixtures/rendering/README.md` for its scope.
+
 Equivalent direct invocation:
 
 ```console
@@ -125,6 +139,17 @@ new destination is useful; existing destinations are deliberately rejected. Pres
 The [feature parity and implementation roadmap](feature-roadmap.md) distinguishes
 missing capabilities from settings already implemented in lower-level Python
 components. It records acceptance criteria and the completed legacy cleanup.
+
+Publication styling is validated by `CompositionSettings` and passed through
+`WorkflowOptions`, GUI requests, worker arguments, and `configuration.composition`
+in manifests. `format_ph_labels` uses decimal half-even rounding and rejects
+ambiguous labels before network requests or scientific execution. This affects
+presentation only: numerical pH values and PyMOL render options are unchanged.
+The compositor uses Pillow's bundled default font, measures actual text bounds,
+expands cells/legend space when necessary, and composites one tile at a time.
+It rejects inconsistent/non-PNG tiles and figures above 100 million pixels
+before allocating the canvas. The final PNG retains the selected DPI metadata.
+Saved-run editing and additional font choices are follow-up work.
 
 ## GUI development
 
@@ -172,6 +197,7 @@ or run pHmap. Run just the controller checks with:
 ```console
 node tests/frontend/run-selection.mjs
 node tests/frontend/protein-selection.mjs
+node tests/frontend/render-settings.mjs
 ```
 
 History reads lightweight summaries, while detailed run views discover images

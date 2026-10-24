@@ -23,7 +23,7 @@ from phmap.backends import (
     discover_executable,
     pdb2pqr_dx_path,
 )
-from phmap.compose import RenderedTile, compose_grid
+from phmap.compose import RenderedTile, compose_grid, format_ph_labels
 from phmap.configuration import WorkflowOptions as WorkflowOptions
 from phmap.errors import ConfigurationError
 from phmap.manifest import RunManifest, sha256_file, utc_now
@@ -137,15 +137,8 @@ def _configuration(inputs: RunInputs, options: WorkflowOptions) -> dict[str, Any
         "ph_values": [str(ph) for ph in inputs.ph_values],
         "ph_mode": inputs.ph_mode.value,
         "view": None if inputs.view is None else list(inputs.view.values),
-        "render": {
-            "size": options.size,
-            "dpi": options.dpi,
-            "potential_level": options.potential_level,
-            "ramp_colors": list(options.ramp_colors),
-            "background": options.background,
-            "foreground": options.foreground,
-            "ray_trace": options.ray_trace,
-        },
+        "render": options.render_configuration(),
+        "composition": options.composition_configuration(inputs.ph_values),
         "scientific": {
             "force_field": options.force_field,
             "titration_state_method": "propka",
@@ -160,6 +153,7 @@ class LocalWorkflow:
     def __init__(self, inputs: RunInputs, options: WorkflowOptions | None = None) -> None:
         self.inputs = inputs
         self.options = options or WorkflowOptions()
+        format_ph_labels(inputs.ph_values, self.options.ph_label_precision)
 
     def _create_workspace(self) -> RunWorkspace:
         if self.options.output_dir is not None:

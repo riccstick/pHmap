@@ -10,6 +10,7 @@ from pathlib import Path
 
 from phmap import __version__
 from phmap.backends import BackendError as ScientificBackendError
+from phmap.compose import format_ph_labels
 from phmap.configuration import WorkflowOptions
 from phmap.doctor import run_doctor
 from phmap.errors import PHMapError
@@ -98,9 +99,41 @@ def _add_input_arguments(parser: argparse.ArgumentParser, *, include_run: bool) 
             help="opaque PyMOL/composition background; omit for transparency",
         )
         parser.add_argument("--foreground", default="black", help="label and border color")
+        parser.add_argument("--font-size", type=int, default=22, help="figure label size, 1–256 px")
+        parser.add_argument("--outer-margin", type=int, default=24, help="outer figure margin, px")
+        parser.add_argument("--column-gap", type=int, default=16, help="gap between pH columns, px")
+        parser.add_argument("--row-gap", type=int, default=16, help="gap between protein rows, px")
+        parser.add_argument(
+            "--label-gap", type=int, default=16, help="gap between labels and grid, px",
+        )
+        parser.add_argument(
+            "--legend", dest="show_colorbar", action=argparse.BooleanOptionalAction, default=True,
+            help="show the shared potential legend (default: enabled)",
+        )
+        parser.add_argument(
+            "--ph-label-precision", type=int, default=None, metavar="DIGITS",
+            help="display 0–6 pH decimal places; omit to preserve input precision (display only)",
+        )
         parser.add_argument("--force-field", default="PARSE")
         parser.add_argument("--timeout", type=float, default=1800.0, metavar="SECONDS")
         parser.add_argument("--no-ray", action="store_true", help="disable PyMOL ray tracing")
+        parser.add_argument(
+            "--surface-mode", type=int, choices=range(5), default=0,
+            help="PyMOL atom inclusion mode, 0–4 (default: 0, respect atom flags)",
+        )
+        parser.add_argument(
+            "--surface-solvent", action=argparse.BooleanOptionalAction, default=False,
+            help="show the solvent-accessible surface instead of solvent-excluded",
+        )
+        parser.add_argument(
+            "--surface-ramp-above-mode", action=argparse.BooleanOptionalAction, default=True,
+            help="sample potential above the surface (default: enabled)",
+        )
+        parser.add_argument(
+            "--ligand-representation", choices=("sticks", "lines", "dots", "spheres", "none"),
+            default="sticks",
+            help="display retained HETATM atoms; none hides the extra representation",
+        )
         parser.add_argument("--pdb2pqr-executable", default="pdb2pqr30")
         parser.add_argument("--apbs-executable", default="apbs")
         parser.add_argument("--pymol-executable", default="pymol")
@@ -229,10 +262,20 @@ def _run(args: argparse.Namespace) -> int:
         force_field=args.force_field,
         timeout=args.timeout,
         ray_trace=not args.no_ray,
+        surface_mode=args.surface_mode,
+        surface_solvent=args.surface_solvent,
+        surface_ramp_above_mode=args.surface_ramp_above_mode,
+        ligand_representation=None if args.ligand_representation == "none"
+        else args.ligand_representation,
         pdb2pqr_executable=args.pdb2pqr_executable,
         apbs_executable=args.apbs_executable,
         pymol_executable=args.pymol_executable,
+        font_size=args.font_size, outer_margin=args.outer_margin,
+        column_gap=args.column_gap, row_gap=args.row_gap, label_gap=args.label_gap,
+        show_colorbar=args.show_colorbar, ph_label_precision=args.ph_label_precision,
     )
+    values, _ = parse_ph_selection(ph_values=args.ph_values, ph_range=args.ph_range)
+    format_ph_labels(values, options.ph_label_precision)
     inputs = _inputs_from_args(args)
     result = LocalWorkflow(inputs, options).run()
     print(f"Run completed: {result.workspace.root}")

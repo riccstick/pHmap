@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass
+from decimal import Decimal
 from pathlib import Path
 
 from phmap.backends import BackendValidationError, PyMOLRenderOptions
 from phmap.backends.pdb2pqr import validate_force_field
-from phmap.compose import CompositionSettings
+from phmap.backends.pymol import LigandRepresentation
+from phmap.compose import CompositionSettings, format_ph_labels
 from phmap.errors import ConfigurationError
 
 
@@ -30,6 +33,17 @@ class WorkflowOptions:
     pdb2pqr_executable: str | Path = "pdb2pqr30"
     apbs_executable: str | Path = "apbs"
     pymol_executable: str | Path = "pymol"
+    surface_mode: int = 0
+    surface_solvent: bool = False
+    surface_ramp_above_mode: bool = True
+    ligand_representation: LigandRepresentation | None = "sticks"
+    font_size: int = 22
+    outer_margin: int = 24
+    column_gap: int = 16
+    row_gap: int = 16
+    label_gap: int = 16
+    show_colorbar: bool = True
+    ph_label_precision: int | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -73,10 +87,35 @@ class WorkflowOptions:
             ramp_colors=self.ramp_colors,
             background="white" if self.background is None else self.background,
             transparent_background=self.background is None, view=view, ray_trace=self.ray_trace,
+            surface_mode=self.surface_mode, surface_solvent=self.surface_solvent,
+            surface_ramp_above_mode=self.surface_ramp_above_mode,
+            ligand_representation=self.ligand_representation,
         )
+
+    def render_configuration(self) -> dict[str, object]:
+        """Persist the effective settings in both queued jobs and run manifests."""
+
+        return {
+            "size": self.size, "dpi": self.dpi, "potential_level": self.potential_level,
+            "ramp_colors": list(self.ramp_colors), "background": self.background,
+            "foreground": self.foreground, "ray_trace": self.ray_trace,
+            "surface_mode": self.surface_mode, "surface_solvent": self.surface_solvent,
+            "surface_ramp_above_mode": self.surface_ramp_above_mode,
+            "ligand_representation": self.ligand_representation,
+        }
 
     def composition_settings(self) -> CompositionSettings:
         return CompositionSettings(
             background=self.background, foreground=self.foreground,
             potential_level=self.potential_level, ramp_colors=self.ramp_colors,
+            font_size=self.font_size, outer_margin=self.outer_margin,
+            column_gap=self.column_gap, row_gap=self.row_gap, label_gap=self.label_gap,
+            show_colorbar=self.show_colorbar, ph_label_precision=self.ph_label_precision,
+            dpi=self.dpi,
         )
+
+    def composition_configuration(self, ph_values: Sequence[Decimal]) -> dict[str, object]:
+        return {
+            "font": "pillow-default", **asdict(self.composition_settings()),
+            "ph_labels": list(format_ph_labels(ph_values, self.ph_label_precision)),
+        }

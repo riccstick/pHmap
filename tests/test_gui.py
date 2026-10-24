@@ -94,6 +94,94 @@ def test_gui_upload_validation_run_history_and_downloads(client: TestClient) -> 
     assert '"status":"completed"' in events.text
 
 
+def test_gui_advanced_settings_reach_validation_worker_manifest_and_script(
+    client: TestClient,
+) -> None:
+    settings = {
+        "surface_mode": 4, "surface_solvent": True,
+        "surface_ramp_above_mode": False, "ligand_representation": None,
+    }
+    validation = _submit(client, endpoint="/api/validate", **settings)
+    assert validation.status_code == 200, validation.text
+    assert settings.items() <= validation.json()["render"].items()
+    submitted = _submit(client, **settings)
+    assert submitted.status_code == 202, submitted.text
+    run_id = submitted.json()["run_id"]
+    data = _wait(client, run_id, {"completed", "failed"})
+    assert data["status"] == "completed", data["error"]
+    manifest = client.get(f"/api/runs/{run_id}/files/manifest.json").json()
+    assert settings.items() <= manifest["configuration"]["render"].items()
+    script_path = next(Path(data["directory"]).rglob("render.pml"))
+    script = script_path.read_text(encoding="utf-8")
+    assert "set surface_mode, 4\n" in script
+    assert "set surface_solvent, 1\n" in script
+    assert "set surface_ramp_above_mode, 0\n" in script
+    assert "molecule and hetatm" not in script
+
+
+def test_gui_publication_settings_reach_validation_worker_and_manifest(client: TestClient) -> None:
+    styles = {
+        "font_size": 34, "outer_margin": 0, "column_gap": 27, "row_gap": 39,
+        "label_gap": 10, "show_colorbar": False, "ph_label_precision": 1,
+        "foreground": "#555555",
+    }
+    validation = _submit(client, endpoint="/api/validate", ph_values="5.125,7.5", **styles)
+    assert validation.status_code == 200, validation.text
+    assert styles.items() <= validation.json()["composition"].items()
+    assert validation.json()["composition"]["ph_labels"] == ["5.1", "7.5"]
+    submitted = _submit(client, ph_values="5.125,7.5", **styles)
+    assert submitted.status_code == 202, submitted.text
+    run_id = submitted.json()["run_id"]
+    result = _wait(client, run_id, {"completed", "failed"})
+    assert result["status"] == "completed", result["error"]
+    manifest = client.get(f"/api/runs/{run_id}/files/manifest.json").json()
+    assert styles.items() <= manifest["configuration"]["composition"].items()
+    assert manifest["configuration"]["composition"]["ph_labels"] == ["5.1", "7.5"]
+    assert manifest["configuration"]["ph_values"] == ["5.125", "7.5"]
+    for task in manifest["tasks"]:
+        assert f"--with-ph={task['ph']}" in task["stages"][0]["argv"]
+
+
+@pytest.mark.parametrize("settings", [
+    {"font_size": 0}, {"font_size": 257}, {"font_size": True},
+    {"row_gap": -1}, {"column_gap": 1025}, {"outer_margin": 1.5}, {"label_gap": -1},
+    {"show_colorbar": "false"}, {"ph_label_precision": 1.5}, {"ph_label_precision": True},
+    {"ph_mode": "explicit", "ph_values": "5.11,5.14", "ph_label_precision": 1},
+])
+def test_gui_rejects_invalid_publication_settings_before_fetching(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, settings: dict,
+) -> None:
+    fetch = Mock(side_effect=AssertionError("Must not fetch"))
+    monkeypatch.setattr("phmap.gui.app.fetch_structure", fetch)
+    response = client.post(
+        "/api/runs", headers=_token(client),
+        data={"settings": json.dumps({"structures": [{"pdb_id": "3SQR"}], **settings})},
+    )
+    assert response.status_code == 422, response.text
+    fetch.assert_not_called()
+    assert client.get("/api/runs").json() == []
+
+
+@pytest.mark.parametrize("settings", [
+    {"surface_mode": -1}, {"surface_mode": 5}, {"surface_mode": 1.5},
+    {"surface_mode": True}, {"surface_solvent": "false"}, {"surface_solvent": 1},
+    {"surface_ramp_above_mode": "off"}, {"ligand_representation": "sticks; quit"},
+    {"ligand_representation": "none"},
+])
+def test_gui_rejects_invalid_advanced_settings_before_fetching_or_queueing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, settings: dict,
+) -> None:
+    fetch = Mock(side_effect=AssertionError("Must not fetch"))
+    monkeypatch.setattr("phmap.gui.app.fetch_structure", fetch)
+    response = client.post(
+        "/api/runs", headers=_token(client),
+        data={"settings": json.dumps({"structures": [{"pdb_id": "3SQR"}], **settings})},
+    )
+    assert response.status_code == 422, response.text
+    assert client.get("/api/runs").json() == []
+    fetch.assert_not_called()
+
+
 def test_gui_rejects_cross_origin_writes_invalid_settings_and_camera(
     client: TestClient,
 ) -> None:

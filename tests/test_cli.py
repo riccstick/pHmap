@@ -35,6 +35,9 @@ def test_validate_command_returns_clean_error(tmp_path: Path, capsys) -> None:  
     ["--ramp-colors", "red", "white", "notacolor"],
     ["--foreground", "notacolor"], ["--background", "white; quit"],
     ["--force-field", "PARSE; quit"],
+    ["--font-size", "0"], ["--font-size", "257"], ["--outer-margin", "-1"],
+    ["--column-gap", "1025"], ["--row-gap", "-1"], ["--label-gap", "-1"],
+    ["--ph-label-precision", "7"],
 ])
 def test_run_rejects_invalid_settings_before_starting_workflow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, arguments: list[str],
@@ -48,6 +51,21 @@ def test_run_rejects_invalid_settings_before_starting_workflow(
     assert main(["run", str(pdb), "--ph", "5", "--output-dir", str(output), *arguments]) == 2
     assert "phmap: error:" in capsys.readouterr().err
     assert not output.exists()
+
+
+def test_cli_rejects_colliding_ph_labels_before_fetching_or_creating_a_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys,
+) -> None:  # type: ignore[no-untyped-def]
+    fetch = Mock(side_effect=AssertionError("Must not fetch"))
+    monkeypatch.setattr("phmap.cli.fetch_structure", fetch)
+    output = tmp_path / "run"
+    assert main([
+        "run", "--pdb-id", "3SQR", "--ph", "5.11", "--ph", "5.14",
+        "--ph-label-precision", "1", "--output-dir", str(output),
+    ]) == 2
+    assert "same label" in capsys.readouterr().err
+    assert not output.exists()
+    fetch.assert_not_called()
 
 
 def test_cli_can_combine_a_pdb_id_and_local_mmcif_variant(
@@ -89,6 +107,21 @@ def test_cli_rejects_all_invalid_ids_before_any_download(
     fetch.assert_not_called()
     assert main(["validate", "--ph", "7"]) == 2
     assert "Provide local structure files" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("arguments", [
+    ["--surface-mode", "-1"], ["--surface-mode", "5"], ["--surface-mode", "2.0"],
+    ["--ligand-representation", "cartoon"], ["--ligand-representation", "sticks; quit"],
+])
+def test_cli_rejects_invalid_advanced_settings_before_fetching(
+    monkeypatch: pytest.MonkeyPatch, arguments: list[str],
+) -> None:
+    fetch = Mock(side_effect=AssertionError("Must not fetch"))
+    monkeypatch.setattr("phmap.cli.fetch_structure", fetch)
+    with pytest.raises(SystemExit) as exc:
+        main(["run", "--pdb-id", "3sqr", "--ph", "7", *arguments])
+    assert exc.value.code == 2
+    fetch.assert_not_called()
 
 
 @pytest.mark.parametrize("invalid", ["label", "count", "view", "ligand", "path", "cif"])

@@ -56,11 +56,11 @@ forms; the table groups both forms together.
 | `--grid_linewidth`, `--grid_place`, `--grid_font_size` | Missing | Control activity ticks, inward or outward placement, and scale labels. |
 | `--update_axis` | Missing | Recompose saved tiles without PDB2PQR, APBS, or PyMOL. |
 | `--update_rendering` | Missing | Render saved PQR and DX artifacts again without PDB2PQR or APBS. |
-| `--pymol_surface_mode`, `--pymol_surface_solvent`, `--pymol_surface_above_mode` | Partial | Renderer supports them; workflow, manifest configuration, CLI, and GUI do not expose them. |
-| `--pymol_ligand_representation` | Partial | Renderer supports sticks, lines, dots, spheres, or hiding the representation; application uses the default. |
-| `--pymol_ramp` | Partial | `CompositionSettings.show_colorbar` exists; application always shows the shared legend. |
-| `--digits` | Missing as a display control | Decimal pH values are preserved, but there is no separate label precision option. |
-| `--axis_font`, `--axis_font_size`, `--axis_font_weight`, `--axis_font_stretch`, `--axis_font_style` | Partial | Compositor has a font size setting, but the application does not expose it; font family and variants are missing. |
+| `--pymol_surface_mode`, `--pymol_surface_solvent`, `--pymol_surface_above_mode` | Available | Use `--surface-mode`, `--surface-solvent`, and `--surface-ramp-above-mode`; also exposed in the GUI and saved in manifests. |
+| `--pymol_ligand_representation` | Available | Use `--ligand-representation sticks\|lines\|dots\|spheres\|none` or the GUI selector. |
+| `--pymol_ramp` | Available | Use `--legend` / `--no-legend` or the GUI checkbox for the shared legend. |
+| `--digits` | Available | `--ph-label-precision` / GUI decimal places change only labels; ambiguous column labels are rejected. |
+| `--axis_font`, `--axis_font_size`, `--axis_font_weight`, `--axis_font_stretch`, `--axis_font_style` | Partial | `--font-size` and the GUI font size control are available; font-family selection and variants remain missing. |
 | `--xalign`, `--yalign` | Missing as controls | pH labels are centered and protein labels are right-aligned; users cannot change alignment. |
 | `--axisline`, `--axisline_strokewidth`, `--axisline_color`, `--axisline_offset` | Missing | Current grid has labels and a legend, not the configurable legacy axis lines. |
 | Saved `.pse` sessions in the local Bash workflow | Missing | Retained PML, PQR, and DX files are useful, but are not a saved PyMOL session. |
@@ -111,35 +111,38 @@ current app.
 
 ## Advanced surface and ligand controls
 
-Priority: high; a relatively small wiring task compared with activity plotting.
-Users should be able to select surface modes 0 through 4, solvent-accessible
-surface display, ramp-above mode, and ligand representation.
+Implemented in the CLI and local GUI. Surface modes 0 through 4,
+solvent-accessible display, ramp-above mode, and sticks/lines/dots/spheres/hidden
+ligand representations pass through the existing workflow and renderer without
+arbitrary user PML. Current defaults are preserved.
 
-`PyMOLRenderOptions` and `build_pymol_script` already implement these controls.
-Extend `WorkflowOptions`, manifest configuration, CLI parsing, GUI settings,
-and worker argument construction to pass them through consistently. Avoid
-creating a second renderer or accepting arbitrary user PML.
+Validation rejects invalid modes/representations before calculation. Regression
+checks cover all values, GUI serialization, worker arguments, generated scripts,
+and manifest configuration. Desktop CI runs `pixi run --locked smoke-rendering`
+against native APBS/PyMOL using protein-only and ligand-bearing prepared PQR
+inputs. The synthetic fixture validates rendering, not ligand parameterization.
 
-Acceptance criteria:
-
-- Preserve the current default rendering when no new controls are selected.
-- All settings can be selected in CLI and GUI and survive worker serialization.
-- Invalid modes and representations fail during validation, before calculation.
-- Script tests check every mode and representation; scientific smoke fixtures
-  include a protein and a representative ligand-bearing input.
-- Record these settings in manifests and include them in future render reuse
-  decisions. A shared ligand remains explicitly experimental until validated.
+All settings are recorded in `configuration.render`; future render reuse must
+include them in its compatibility decisions. Shared MOL2 input remains
+experimental: the legacy FAD example fails in PDB2PQR 3.7.1's parameter assignment.
+See the [rendering tutorial](tutorial.md#advanced-surface-and-ligand-rendering).
 
 ## Publication styling and figure editing
 
 Priority: high. Users should be able to improve labels and layout after an
 expensive run without repeating scientific calculations.
 
-Expose the existing compositor settings first: font size, margins, gaps, and
-legend visibility. Then add display-only pH precision, font selection and
-variants, label alignment, optional axis lines, and activity tick styling.
-Use a documented font fallback or a redistributable bundled font so desktop
-results do not depend on an unavailable Helvetica installation.
+First milestone implemented for **new runs**: font size, outer margins,
+row/column/label gaps, foreground/background colors, legend visibility, and
+display-only pH precision are exposed in the CLI and GUI and saved in manifests.
+Pillow's bundled default font avoids a dependency on a system Helvetica font.
+The compositor measures text/legend space, preserves tile pixels, streams tile
+composition, and writes final PNG DPI metadata. Tests cover layout/order,
+transparency, legend colors, invalid settings/tiles, and duplicate display labels.
+
+Remaining work: saved-run figure editing, font selection and variants, label
+alignment, optional axis lines, and activity tick styling. No editing action
+or automatic scientific/render reuse is implemented by the first milestone.
 
 Acceptance criteria:
 
@@ -223,7 +226,7 @@ later; the legacy final figure was PNG, so they are not parity requirements.
 
 ## Suggested implementation order
 
-1. Expose existing advanced render controls and legend/font-size settings.
+1. Extend publication styling with font choices/alignment (basic styling and advanced surface/ligand controls are implemented).
 2. Add the activity model, import validation, and Python lollipop composition.
 3. Add publication styling and safe composition from an existing run.
 4. Add rendering from verified PQR/DX artifacts, then explicit selective resume.

@@ -151,6 +151,33 @@ fresh archive copies. Original mmCIF files are retained; the pinned scientific
 backend uses an audited PDB intermediate with documented size/identifier limits.
 See the [structure tutorial](docs/tutorial.md#pdbxmmcif-and-pdb-ids).
 
+Advanced surface and ligand display options are available in the browser's
+**Advanced surface & ligand rendering** section and in the CLI:
+
+```console
+pixi run phmap run example/mutant2.pdb --ph-range 3 8 1 \
+  --surface-mode 1 --surface-solvent --no-surface-ramp-above-mode \
+  --ligand-representation sticks
+```
+
+Defaults remain unchanged. Choose `sticks`, `lines`, `dots`, `spheres`, or `none`
+for the extra HETATM representation. These are display controls, not ligand
+parameterization; the shared MOL2 input remains experimental. See the
+[rendering tutorial](docs/tutorial.md#advanced-surface-and-ligand-rendering).
+
+The GUI's **Publication styling** section also exposes label size/color, margins,
+row/column/label spacing, legend visibility, and display-only pH precision:
+
+```console
+pixi run phmap run example/mutant2.pdb --ph-range 3 8 1 \
+  --font-size 32 --outer-margin 32 --column-gap 24 --row-gap 24 \
+  --label-gap 20 --ph-label-precision 1
+```
+
+Use `--no-legend` to hide the shared legend. These controls style new runs;
+editing an existing run without recalculation is a follow-up feature. See the
+[publication styling guide](docs/tutorial.md#publication-styling).
+
 ## Python-only development
 
 If compatible PDB2PQR, APBS, and PyMOL executables are already available on
