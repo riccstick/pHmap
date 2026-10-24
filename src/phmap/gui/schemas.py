@@ -6,6 +6,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from phmap.backends.pymol import LigandRepresentation
+from phmap.compose import MAX_FONT_SIZE, MAX_SPACING, format_ph_labels
 from phmap.configuration import WorkflowOptions
 from phmap.inputs import parse_ph_selection, validate_protein_names
 from phmap.models import InputValidationError
@@ -59,6 +60,13 @@ class RunSettings(BaseModel):
     surface_solvent: bool = Field(default=False, strict=True)
     surface_ramp_above_mode: bool = Field(default=True, strict=True)
     ligand_representation: LigandRepresentation | None = "sticks"
+    font_size: int = Field(default=22, ge=1, le=MAX_FONT_SIZE, strict=True)
+    outer_margin: int = Field(default=24, ge=0, le=MAX_SPACING, strict=True)
+    column_gap: int = Field(default=16, ge=0, le=MAX_SPACING, strict=True)
+    row_gap: int = Field(default=16, ge=0, le=MAX_SPACING, strict=True)
+    label_gap: int = Field(default=16, ge=0, le=MAX_SPACING, strict=True)
+    show_colorbar: bool = Field(default=True, strict=True)
+    ph_label_precision: int | None = Field(default=None, ge=0, le=6, strict=True)
 
     def options(self, runs_dir: Path) -> WorkflowOptions:
         return WorkflowOptions(
@@ -68,6 +76,9 @@ class RunSettings(BaseModel):
             surface_mode=self.surface_mode, surface_solvent=self.surface_solvent,
             surface_ramp_above_mode=self.surface_ramp_above_mode,
             ligand_representation=self.ligand_representation,
+            font_size=self.font_size, outer_margin=self.outer_margin,
+            column_gap=self.column_gap, row_gap=self.row_gap, label_gap=self.label_gap,
+            show_colorbar=self.show_colorbar, ph_label_precision=self.ph_label_precision,
         )
 
     def selected_rows(self, upload_count: int) -> list[StructureSelection]:
@@ -89,4 +100,5 @@ class RunSettings(BaseModel):
         )
         if len(values) * len(rows) > 512:
             raise InputValidationError("Use at most 512 calculation cells per GUI run")
+        format_ph_labels(values, self.ph_label_precision)
         return rows

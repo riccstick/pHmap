@@ -12,10 +12,13 @@ const controls = Object.fromEntries(Object.entries({
   background: "white", "run-name": "Test", "ph-start": "3", "ph-stop": "8", "ph-step": "1",
   "ph-values": "", size: "500", dpi: "300", level: "5", ramp: "red,white,blue", "force-field": "PARSE",
   "surface-mode": "0", "ligand-representation": "sticks",
+  foreground: "auto", "font-size": "22", "outer-margin": "24",
+  "column-gap": "16", "row-gap": "16", "label-gap": "16", "ph-label-precision": "",
 }).map(([key, value]) => [key, { value }]));
 controls.ray = { checked: true };
 controls["surface-solvent"] = { checked: false };
 controls["surface-ramp-above-mode"] = { checked: true };
+controls.legend = { checked: true };
 controls.view = { files: [] };
 controls.ligand = { files: [] };
 class FormDataFixture extends Map {
@@ -32,6 +35,31 @@ assert.equal(settings().surface_mode, 0);
 assert.equal(settings().surface_solvent, false);
 assert.equal(settings().surface_ramp_above_mode, true);
 assert.equal(settings().ligand_representation, "sticks");
+assert.equal(settings().font_size, 22);
+assert.equal(settings().outer_margin, 24);
+assert.equal(settings().show_colorbar, true);
+assert.equal(settings().ph_label_precision, null);
+controls.background.value = "black";
+assert.equal(settings().foreground, "white");
+controls.foreground.value = "#555555";
+assert.equal(settings().foreground, "#555555");
+controls.background.value = "transparent";
+assert.equal(settings().background, null);
+controls["font-size"].value = "42";
+controls["outer-margin"].value = "0";
+controls["column-gap"].value = "23";
+controls["row-gap"].value = "35";
+controls["label-gap"].value = "8";
+controls["ph-label-precision"].value = "0";
+controls.legend.checked = false;
+assert.equal(settings().font_size, 42);
+assert.equal(settings().outer_margin, 0);
+assert.equal(settings().column_gap, 23);
+assert.equal(settings().row_gap, 35);
+assert.equal(settings().label_gap, 8);
+assert.equal(settings().ph_label_precision, 0);
+assert.equal(settings().show_colorbar, false);
+assert.match(template, /id="legend"[^>]*checked/);
 
 for (let mode = 0; mode <= 4; mode += 1) {
   for (const representation of ["sticks", "lines", "dots", "spheres", "none"]) {

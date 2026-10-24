@@ -49,12 +49,18 @@ def build_worker_argv(inputs: RunInputs, options: WorkflowOptions) -> list[str]:
         "--surface-ramp-above-mode" if options.surface_ramp_above_mode
         else "--no-surface-ramp-above-mode",
         "--ligand-representation", options.ligand_representation or "none",
+        "--font-size", str(options.font_size), "--outer-margin", str(options.outer_margin),
+        "--column-gap", str(options.column_gap), "--row-gap", str(options.row_gap),
+        "--label-gap", str(options.label_gap),
+        "--legend" if options.show_colorbar else "--no-legend",
         "--pdb2pqr-executable", str(options.pdb2pqr_executable),
         "--apbs-executable", str(options.apbs_executable),
         "--pymol-executable", str(options.pymol_executable),
     ))
     if options.background is not None:
         argv.extend(("--background", options.background))
+    if options.ph_label_precision is not None:
+        argv.extend(("--ph-label-precision", str(options.ph_label_precision)))
     if not options.ray_trace:
         argv.append("--no-ray")
     if inputs.proteins[0].ligand is not None:
@@ -141,6 +147,7 @@ class JobManager:
                     "ph_values": [str(ph) for ph in inputs.ph_values],
                     "ph_mode": inputs.ph_mode.value,
                     "render": options.render_configuration(),
+                    "composition": options.composition_configuration(inputs.ph_values),
                 },
             }
             self._save(run_id)

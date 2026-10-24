@@ -140,6 +140,17 @@ The [feature parity and implementation roadmap](feature-roadmap.md) distinguishe
 missing capabilities from settings already implemented in lower-level Python
 components. It records acceptance criteria and the completed legacy cleanup.
 
+Publication styling is validated by `CompositionSettings` and passed through
+`WorkflowOptions`, GUI requests, worker arguments, and `configuration.composition`
+in manifests. `format_ph_labels` uses decimal half-even rounding and rejects
+ambiguous labels before network requests or scientific execution. This affects
+presentation only: numerical pH values and PyMOL render options are unchanged.
+The compositor uses Pillow's bundled default font, measures actual text bounds,
+expands cells/legend space when necessary, and composites one tile at a time.
+It rejects inconsistent/non-PNG tiles and figures above 100 million pixels
+before allocating the canvas. The final PNG retains the selected DPI metadata.
+Saved-run editing and additional font choices are follow-up work.
+
 ## GUI development
 
 `pixi run gui` launches a FastAPI server on `127.0.0.1:8765` and opens the local

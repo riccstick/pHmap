@@ -119,6 +119,49 @@ def test_gui_advanced_settings_reach_validation_worker_manifest_and_script(
     assert "molecule and hetatm" not in script
 
 
+def test_gui_publication_settings_reach_validation_worker_and_manifest(client: TestClient) -> None:
+    styles = {
+        "font_size": 34, "outer_margin": 0, "column_gap": 27, "row_gap": 39,
+        "label_gap": 10, "show_colorbar": False, "ph_label_precision": 1,
+        "foreground": "#555555",
+    }
+    validation = _submit(client, endpoint="/api/validate", ph_values="5.125,7.5", **styles)
+    assert validation.status_code == 200, validation.text
+    assert styles.items() <= validation.json()["composition"].items()
+    assert validation.json()["composition"]["ph_labels"] == ["5.1", "7.5"]
+    submitted = _submit(client, ph_values="5.125,7.5", **styles)
+    assert submitted.status_code == 202, submitted.text
+    run_id = submitted.json()["run_id"]
+    result = _wait(client, run_id, {"completed", "failed"})
+    assert result["status"] == "completed", result["error"]
+    manifest = client.get(f"/api/runs/{run_id}/files/manifest.json").json()
+    assert styles.items() <= manifest["configuration"]["composition"].items()
+    assert manifest["configuration"]["composition"]["ph_labels"] == ["5.1", "7.5"]
+    assert manifest["configuration"]["ph_values"] == ["5.125", "7.5"]
+    for task in manifest["tasks"]:
+        assert f"--with-ph={task['ph']}" in task["stages"][0]["argv"]
+
+
+@pytest.mark.parametrize("settings", [
+    {"font_size": 0}, {"font_size": 257}, {"font_size": True},
+    {"row_gap": -1}, {"column_gap": 1025}, {"outer_margin": 1.5}, {"label_gap": -1},
+    {"show_colorbar": "false"}, {"ph_label_precision": 1.5}, {"ph_label_precision": True},
+    {"ph_mode": "explicit", "ph_values": "5.11,5.14", "ph_label_precision": 1},
+])
+def test_gui_rejects_invalid_publication_settings_before_fetching(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, settings: dict,
+) -> None:
+    fetch = Mock(side_effect=AssertionError("Must not fetch"))
+    monkeypatch.setattr("phmap.gui.app.fetch_structure", fetch)
+    response = client.post(
+        "/api/runs", headers=_token(client),
+        data={"settings": json.dumps({"structures": [{"pdb_id": "3SQR"}], **settings})},
+    )
+    assert response.status_code == 422, response.text
+    fetch.assert_not_called()
+    assert client.get("/api/runs").json() == []
+
+
 @pytest.mark.parametrize("settings", [
     {"surface_mode": -1}, {"surface_mode": 5}, {"surface_mode": 1.5},
     {"surface_mode": True}, {"surface_solvent": "false"}, {"surface_solvent": 1},

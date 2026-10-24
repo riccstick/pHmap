@@ -177,7 +177,8 @@ function formData() {
     labels: inputs.labels, structures: inputs.structures, size: Number($("size").value),
     dpi: Number($("dpi").value), level: Number($("level").value),
     background: background === "transparent" ? null : background,
-    foreground: background === "black" ? "white" : "black",
+    foreground: $("foreground").value === "auto"
+      ? (background === "black" ? "white" : "black") : $("foreground").value,
     ramp_colors: $("ramp").value.split(","), force_field: $("force-field").value,
     ray_trace: $("ray").checked,
     surface_mode: Number($("surface-mode").value),
@@ -185,6 +186,11 @@ function formData() {
     surface_ramp_above_mode: $("surface-ramp-above-mode").checked,
     ligand_representation: $("ligand-representation").value === "none"
       ? null : $("ligand-representation").value,
+    font_size: Number($("font-size").value), outer_margin: Number($("outer-margin").value),
+    column_gap: Number($("column-gap").value), row_gap: Number($("row-gap").value),
+    label_gap: Number($("label-gap").value), show_colorbar: $("legend").checked,
+    ph_label_precision: $("ph-label-precision").value === ""
+      ? null : Number($("ph-label-precision").value),
   };
   const data = new FormData();
   data.append("settings", JSON.stringify(settings));

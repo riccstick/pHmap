@@ -1,4 +1,5 @@
 import threading
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,29 @@ def test_advanced_render_settings_survive_worker_serialization(
     assert parsed.surface_solvent is solvent
     assert parsed.surface_ramp_above_mode is above
     assert parsed.ligand_representation == (representation or "none")
+
+
+@pytest.mark.parametrize("precision", [None, 0, 2])
+@pytest.mark.parametrize("legend", [False, True])
+def test_publication_settings_survive_worker_serialization(
+    tmp_path: Path, precision: int | None, legend: bool,
+) -> None:
+    path = tmp_path / "input.pdb"
+    path.write_text("ATOM\n", encoding="utf-8")
+    inputs = validate_run_inputs(path, ph_values=["5.125", "7.5"])
+    options = WorkflowOptions(
+        font_size=36, outer_margin=0, column_gap=22, row_gap=35, label_gap=10,
+        show_colorbar=legend, ph_label_precision=precision, foreground="#555555",
+    )
+    parsed = build_parser().parse_args(build_worker_argv(inputs, options)[3:])
+    assert parsed.font_size == 36
+    assert parsed.outer_margin == 0
+    assert parsed.column_gap == 22 and parsed.row_gap == 35
+    assert parsed.label_gap == 10
+    assert parsed.show_colorbar is legend
+    assert parsed.ph_label_precision == precision
+    assert parsed.foreground == "#555555"
+    assert tuple(Decimal(ph) for ph in parsed.ph_values) == inputs.ph_values
 
 
 def test_cancelled_waiting_jobs_immediately_free_queue_capacity(

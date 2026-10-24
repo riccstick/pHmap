@@ -52,6 +52,23 @@
             <details class="settings-details"><summary>Figure &amp; calculation settings</summary><div class="two-fields"><label>Tile size, px<input id="size" type="number" min="64" max="4096" value="500"></label><label>DPI<input id="dpi" type="number" min="1" max="4800" value="300"></label><label>Potential limit, ±<input id="level" type="number" min="0.01" step="any" value="5"></label><label>Background<select id="background"><option value="white">White</option><option value="transparent">Transparent</option><option value="black">Black</option></select></label><label>Potential colors<select id="ramp"><option value="red,white,blue">Red → white → blue</option><option value="blue,white,red">Blue → white → red</option></select></label><label>Force field<select id="force-field"><option>PARSE</option><option>AMBER</option><option>CHARMM</option></select></label></div><label class="checkbox"><input id="ray" type="checkbox" checked> Ray trace final surfaces</label></details>
 
             <details class="settings-details">
+              <summary>Publication styling</summary>
+              <div class="two-fields">
+                <label>Font size, px<input id="font-size" type="number" min="1" max="256" step="1" value="22" required></label>
+                <label>Outer margin, px<input id="outer-margin" type="number" min="0" max="1024" step="1" value="24" required></label>
+                <label>Column gap, px<input id="column-gap" type="number" min="0" max="1024" step="1" value="16" required></label>
+                <label>Row gap, px<input id="row-gap" type="number" min="0" max="1024" step="1" value="16" required></label>
+                <label>Label gap, px<input id="label-gap" type="number" min="0" max="1024" step="1" value="16" required></label>
+                <label>Label &amp; border color<select id="foreground"><option value="auto">Automatic contrast</option><option value="black">Black</option><option value="white">White</option><option value="#555555">Dark gray</option></select></label>
+              </div>
+              <label class="field-label" for="ph-label-precision">pH label decimal places</label>
+              <select id="ph-label-precision" aria-describedby="ph-label-hint"><option value="">Preserve input precision (default)</option><option value="0">0 decimal places</option><option value="1">1 decimal place</option><option value="2">2 decimal places</option><option value="3">3 decimal places</option><option value="4">4 decimal places</option><option value="5">5 decimal places</option><option value="6">6 decimal places</option></select>
+              <p class="field-hint" id="ph-label-hint">Display only: calculation pH values stay unchanged. A precision that gives different columns identical labels is rejected.</p>
+              <label class="checkbox"><input id="legend" type="checkbox" checked> Show the shared potential legend</label>
+              <p class="field-hint">Uses Pillow's bundled default font, without requiring system fonts. Font and spacing sizes are pixels; the background is set under Figure &amp; calculation settings. These options style a new calculation; editing saved runs is not available yet.</p>
+            </details>
+
+            <details class="settings-details">
               <summary>Advanced surface &amp; ligand rendering</summary>
               <label class="field-label" for="surface-mode">Surface atom inclusion</label>
               <select id="surface-mode" aria-describedby="surface-mode-hint">

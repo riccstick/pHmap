@@ -168,3 +168,57 @@ Shared MOL2 parameterization remains experimental. In particular, the legacy
 PDB2PQR 3.7.1's ligand parameter assignment (`ValueError: 'P' is not in list`),
 before rendering starts. The native rendering smoke uses a separate prepared
 synthetic PQR fixture; it does not validate general ligand parameterization.
+
+## Publication styling
+
+Open **Publication styling** in the browser interface to adjust labels and
+layout for a new run. The same controls are available in the CLI:
+
+| Option | Default | Range / effect |
+| --- | --- | --- |
+| `--font-size` | `22` | Label size in pixels, 1–256. |
+| `--outer-margin` | `24` | Outer margin in pixels, 0–1024. |
+| `--column-gap` | `16` | Gap between pH columns in pixels, 0–1024. |
+| `--row-gap` | `16` | Gap between protein rows in pixels, 0–1024. |
+| `--label-gap` | `16` | Gap between labels/grid and legend in pixels, 0–1024. |
+| `--legend` / `--no-legend` | On | Show or hide the shared potential legend. |
+| `--ph-label-precision` | Preserve input | Display 0–6 decimal places. |
+| `--foreground` | `black` | Label and legend-border color. |
+| `--background` | Transparent in CLI | Figure/tile background; GUI defaults to white. |
+| `--dpi` | `300` | PNG resolution metadata, including the final composed image. |
+
+The GUI provides automatic label contrast or explicit black, white, and dark gray
+presets. Its existing background selector remains under **Figure & calculation
+settings**. CLI color strings are validated; label colors may also use hex such
+as `--foreground '#555555'`.
+
+```console
+pixi run phmap run example/mutant2.pdb --ph 5.125 --ph 7.5 \
+  --font-size 32 --outer-margin 32 --column-gap 24 --row-gap 32 \
+  --label-gap 20 --ph-label-precision 1 --dpi 450 --background white
+```
+
+This labels the columns **5.1** and **7.5**, but still calculates at **5.125** and
+**7.5**. Formatting uses decimal round-half-to-even and never changes scientific
+pH values. A precision that merges distinct columns (for example, `5.11` and
+`5.14` at one decimal place) is rejected before calculations or downloads start.
+
+The compositor uses
+[Pillow's bundled default font](https://pillow.readthedocs.io/en/stable/reference/ImageFont.html#PIL.ImageFont.load_default)
+(Aileron Regular with limited character coverage when FreeType is available),
+not an operating-system font path. Font-family selection, bold/italic variants,
+custom alignment, and axis lines are not exposed yet.
+
+Large labels expand row/column layout without rescaling the rendered surface
+tiles. A wide legend also expands the canvas to avoid clipping. Final figures
+are limited to 100 million pixels; reduce tile size, spacing, font size, or the
+number of cells if this limit is reached. Composition loads one tile at a time.
+Text placement has been corrected, so final figure dimensions/pixels may differ
+slightly from older releases even with default settings; scientific artifacts
+and render settings are unchanged by publication styling.
+
+Effective values, font source, and displayed pH labels are recorded under
+`configuration.composition` in the manifest; `configuration.ph_values` retains
+the exact calculation values. These controls currently apply to **new runs**.
+A saved-run editing action with verified tile reuse and separately versioned
+figures remains planned; existing figures are not overwritten by a styling edit.

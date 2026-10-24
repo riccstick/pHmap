@@ -20,6 +20,9 @@ from phmap.workflow import WorkflowOptions as LegacyWorkflowOptions
     {"surface_ramp_above_mode": "off"}, {"surface_ramp_above_mode": 0},
     {"ligand_representation": "cartoon"}, {"ligand_representation": "sticks; quit"},
     {"ligand_representation": []},
+    {"font_size": 0}, {"font_size": 257}, {"font_size": True},
+    {"row_gap": -1}, {"column_gap": 1025}, {"outer_margin": 1.5},
+    {"label_gap": -1}, {"show_colorbar": "false"}, {"ph_label_precision": 7},
 ])
 def test_invalid_settings_are_rejected_at_construction(settings: dict) -> None:
     with pytest.raises(ConfigurationError):
@@ -47,6 +50,22 @@ def test_advanced_render_defaults_are_unchanged() -> None:
     assert render.surface_solvent is False
     assert render.surface_ramp_above_mode is True
     assert render.ligand_representation == "sticks"
+
+
+def test_publication_settings_are_shared_without_affecting_rendering(tmp_path: Path) -> None:
+    settings = RunSettings(
+        font_size=36, outer_margin=40, row_gap=23, column_gap=19, label_gap=10,
+        show_colorbar=False, ph_label_precision=2,
+    )
+    options = settings.options(tmp_path)
+    composition = options.composition_settings()
+    assert composition.font_size == 36
+    assert composition.outer_margin == 40
+    assert composition.row_gap == 23 and composition.column_gap == 19
+    assert composition.label_gap == 10
+    assert composition.show_colorbar is False
+    assert composition.ph_label_precision == 2
+    assert options.render_options() == RunSettings().options(tmp_path).render_options()
 
 
 @pytest.mark.parametrize("representation", ["sticks", "lines", "dots", "spheres", None])
