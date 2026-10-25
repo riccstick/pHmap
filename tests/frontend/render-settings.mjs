@@ -29,6 +29,7 @@ const serialize = runInNewContext(`(${formFunction})`, {
   phMode: () => "range",
   proteinSelection: { inputs: () => ({ labels: ["WT"], structures: [{ pdb_id: "3SQR" }], uploads: [] }) },
   FormData: FormDataFixture,
+  templateSource: null, reuseView: false, reuseLigand: false,
 });
 const settings = () => JSON.parse(serialize().get("settings"));
 assert.equal(settings().surface_mode, 0);

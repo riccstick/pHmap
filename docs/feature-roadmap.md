@@ -208,10 +208,12 @@ These are useful next steps, not features already present in the Bash code:
   common camera to the grid. The viewer must work without a CDN, and matching
   browser/PyMOL camera conventions needs explicit verification. Structure
   alignment is separate from merely sharing a camera.
-- Saved project settings and a rerun action: reload protein ordering, pH
-  selection, camera, and styling from history or a portable configuration.
-  Validate input availability and hashes before reusing them; distinguish
-  this from automatically resuming an interrupted job.
+- History setup reuse is implemented: **Use as template** restores protein order,
+  original pH selection, camera, shared ligand, and styling for a separate full
+  recalculation. Saved inputs are hash-verified, including submission snapshots
+  of newly cancelled queued jobs. Original range parameters are preserved; older
+  runs without them load explicit values. Portable project/configuration export
+  remains planned. This is not automatic resume or composition-only editing.
 - Per-protein ligand assignment and better structure diagnostics: the domain
   model can hold individual ligands, but CLI/GUI submissions currently use a
   shared ligand. Surface warnings about unsupported or incomplete inputs before

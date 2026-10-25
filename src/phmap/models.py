@@ -352,6 +352,7 @@ class RunInputs:
     ph_values: tuple[Decimal, ...]
     view: PyMOLView | None
     ph_mode: PHInputMode
+    ph_range: PHRange | None
 
     def __init__(
         self,
@@ -359,6 +360,7 @@ class RunInputs:
         ph_values: Iterable[DecimalLike],
         view: PyMOLView | None = None,
         ph_mode: PHInputMode | str = PHInputMode.EXPLICIT,
+        ph_range: PHRange | None = None,
     ) -> None:
         parsed_proteins = tuple(proteins)
         if not parsed_proteins:
@@ -394,8 +396,16 @@ class RunInputs:
             raise InputValidationError(f"ph_mode must be one of: {allowed}") from exc
         if view is not None and not isinstance(view, PyMOLView):
             raise InputValidationError("view must be a PyMOLView object or None")
+        if ph_range is not None and (
+            not isinstance(ph_range, PHRange)
+            or parsed_mode != PHInputMode.RANGE or ph_range.values() != parsed_ph_values
+        ):
+            raise InputValidationError(
+                "pH range metadata must match the calculation values and mode",
+            )
 
         object.__setattr__(self, "proteins", parsed_proteins)
         object.__setattr__(self, "ph_values", parsed_ph_values)
         object.__setattr__(self, "view", view)
         object.__setattr__(self, "ph_mode", parsed_mode)
+        object.__setattr__(self, "ph_range", ph_range)

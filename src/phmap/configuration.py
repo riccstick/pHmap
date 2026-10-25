@@ -7,12 +7,14 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from phmap.backends import BackendValidationError, PyMOLRenderOptions
 from phmap.backends.pdb2pqr import validate_force_field
 from phmap.backends.pymol import LigandRepresentation
 from phmap.compose import CompositionSettings, format_ph_labels
 from phmap.errors import ConfigurationError
+from phmap.models import RunInputs, structure_format
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,3 +121,28 @@ class WorkflowOptions:
             "font": "pillow-default", **asdict(self.composition_settings()),
             "ph_labels": list(format_ph_labels(ph_values, self.ph_label_precision)),
         }
+
+
+def build_run_configuration(inputs: RunInputs, options: WorkflowOptions) -> dict[str, Any]:
+    """Use identical validated configuration for queued submissions and final runs."""
+
+    return {
+        "proteins": [{
+            "id": protein.protein_id, "label": protein.label, "path": str(protein.path),
+            "format": structure_format(protein.path),
+            "ligand": None if protein.ligand is None else str(protein.ligand),
+        } for protein in inputs.proteins],
+        "ph_values": [str(ph) for ph in inputs.ph_values],
+        "ph_mode": inputs.ph_mode.value,
+        "ph_range": None if inputs.ph_range is None else {
+            "start": str(inputs.ph_range.start), "stop": str(inputs.ph_range.stop),
+            "step": str(inputs.ph_range.step),
+        },
+        "view": None if inputs.view is None else list(inputs.view.values),
+        "render": options.render_configuration(),
+        "composition": options.composition_configuration(inputs.ph_values),
+        "scientific": {
+            "force_field": options.force_field, "titration_state_method": "propka",
+            "drop_water": True,
+        },
+    }

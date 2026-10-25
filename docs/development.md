@@ -198,12 +198,26 @@ or run pHmap. Run just the controller checks with:
 node tests/frontend/run-selection.mjs
 node tests/frontend/protein-selection.mjs
 node tests/frontend/render-settings.mjs
+node tests/frontend/template-settings.mjs
+node tests/frontend/request-races.mjs
 ```
 
 History reads lightweight summaries, while detailed run views discover images
 and logs only when requested. Desktop environment installation and activation
 live in `phmap.desktop_runtime`, separately from the launcher window and local
 service lifecycle. Its tests simulate setup without downloading a toolchain.
+
+History templates restore validated settings through `gui.run_templates`, never
+by replaying saved worker arguments. `RunInputs` retains optional validated
+`PHRange` metadata; the CLI worker and shared `build_run_configuration` preserve
+the original range triple as well as the calculated values. Older metadata falls
+back to explicit values. GUI submissions persist a full typed configuration and
+input checksums before queueing, permitting templates of unstarted cancelled jobs.
+Execution manifests take precedence over submission snapshots; damaged manifests
+do not silently fall back to another source. All input reads are confined to the
+run's saved input folder (or its private queued-input folder), with hashes checked
+again during bounded staging copies. Reruns use new workspaces and record the
+source metadata hash in `based_on`. They never reuse calculated artifacts.
 
 `JobManager` runs a single isolated `python -m phmap run` worker at a time. It
 keeps queue metadata and uploaded input copies below `runs/.gui/`. Each worker

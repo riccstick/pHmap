@@ -9,7 +9,7 @@ from phmap.backends.pymol import LigandRepresentation
 from phmap.compose import MAX_FONT_SIZE, MAX_SPACING, format_ph_labels
 from phmap.configuration import WorkflowOptions
 from phmap.inputs import parse_ph_selection, validate_protein_names
-from phmap.models import InputValidationError
+from phmap.models import InputValidationError, validate_protein_id
 from phmap.structures import normalize_pdb_id
 
 
@@ -19,13 +19,18 @@ class StructureSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
     upload_index: int | None = Field(default=None, ge=0, le=31, strict=True)
     pdb_id: str | None = Field(default=None, max_length=20)
+    saved_protein_id: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def one_source(self) -> Self:
-        if (self.upload_index is None) == (self.pdb_id is None):
-            raise ValueError("Choose exactly one upload or PDB ID per protein row")
+        if sum(value is not None for value in (
+            self.upload_index, self.pdb_id, self.saved_protein_id,
+        )) != 1:
+            raise ValueError("Choose exactly one upload, PDB ID, or saved input per protein row")
         if self.pdb_id is not None:
             self.pdb_id = normalize_pdb_id(self.pdb_id)
+        if self.saved_protein_id is not None:
+            validate_protein_id(self.saved_protein_id)
         return self
 
 
@@ -67,6 +72,20 @@ class RunSettings(BaseModel):
     label_gap: int = Field(default=16, ge=0, le=MAX_SPACING, strict=True)
     show_colorbar: bool = Field(default=True, strict=True)
     ph_label_precision: int | None = Field(default=None, ge=0, le=6, strict=True)
+    source_run_id: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+    )
+    reuse_view: bool = Field(default=False, strict=True)
+    reuse_ligand: bool = Field(default=False, strict=True)
+
+    @model_validator(mode="after")
+    def saved_inputs_have_a_source(self) -> Self:
+        if self.source_run_id is None and (
+            self.reuse_view or self.reuse_ligand
+            or any(row.saved_protein_id is not None for row in self.structures)
+        ):
+            raise ValueError("Reusing saved inputs requires a source run")
+        return self
 
     def options(self, runs_dir: Path) -> WorkflowOptions:
         return WorkflowOptions(

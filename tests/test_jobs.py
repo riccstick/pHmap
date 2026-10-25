@@ -58,6 +58,32 @@ def test_publication_settings_survive_worker_serialization(
     assert tuple(Decimal(ph) for ph in parsed.ph_values) == inputs.ph_values
 
 
+def test_worker_receives_the_original_non_aligned_range(tmp_path: Path) -> None:
+    path = tmp_path / "input.pdb"
+    path.write_text("ATOM\n", encoding="utf-8")
+    inputs = validate_run_inputs(path, ph_range=("3", "8", "2"))
+    assert inputs.ph_range is not None
+    arguments = build_parser().parse_args(build_worker_argv(inputs, WorkflowOptions())[3:])
+    assert arguments.ph_range == ["3", "8", "2"]
+    assert arguments.ph_values is None
+
+
+def test_older_cancelled_jobs_without_a_snapshot_cannot_offer_a_template(tmp_path: Path) -> None:
+    records = tmp_path / "runs/.gui/jobs"
+    records.mkdir(parents=True)
+    write_json(records / "old-cancelled.json", {
+        "status": "cancelled", "configuration": {
+            "proteins": [{"id": "wt", "label": "WT"}], "ph_values": ["7"],
+        },
+    })
+    manager = JobManager(tmp_path / "runs")
+    manager.start()
+    try:
+        assert manager.snapshot("old-cancelled")["can_template"] is False
+    finally:
+        manager.close()
+
+
 def test_cancelled_waiting_jobs_immediately_free_queue_capacity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

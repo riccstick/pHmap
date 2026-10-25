@@ -51,6 +51,37 @@ pixi run gui
 It opens the interface at <http://127.0.0.1:8765>. For environment setup and
 more command-line options, see the [development guide](development.md).
 
+## Reuse a calculation from history
+
+1. Select a finished calculation in **Run history**.
+2. Click **Use as template**. This loads the setup without starting any tools.
+3. Adjust pH values, labels/order, rendering, or publication styling. You can
+   remove saved structure rows and add new files or PDB entries.
+4. Saved camera and shared ligand inputs are marked in the form. Upload a new
+   file to replace one, or use **remove saved camera/ligand** to omit it.
+5. Click **Start calculation** to create a new run with a new name/ID.
+
+The app uses hash-verified copies retained with the original run, not the
+original upload paths or fresh archive downloads. The source figure, settings,
+and files are not modified. Every scientific/rendering stage runs again; this
+is **not** resume or composition-only figure editing. The new manifest's
+`based_on` field identifies and hashes the source manifest or submission record.
+
+New runs retain the original pH range bounds and step, even when the stop is
+not reached: `3–8` at step `2` remains that range, calculating `3, 5, 7`.
+Older runs without the original range parameters load their exact ordered pH
+values in **Specific values** mode instead of guessing a range.
+
+A newly queued job saves its setup before execution, so it can be used as a
+template after cancellation or an interrupted queue restart. Older cancelled
+jobs without a saved setup have a disabled action with an explanation. Missing
+or modified saved files produce a clear error; the app never silently substitutes
+a different structure or replays executable arguments from a saved job. Runs
+outside the GUI's current size/count limits cannot be loaded as templates.
+
+**New calculation** clears the form and cancels pending setup/PDB requests;
+late responses cannot repopulate the new setup.
+
 ## PDBx/mmCIF and PDB IDs
 
 Text **PDBx/mmCIF** files normally use `.cif` or `.mmcif`. Both are accepted,

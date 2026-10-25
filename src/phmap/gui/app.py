@@ -29,7 +29,13 @@ from phmap import __version__
 from phmap.doctor import run_doctor
 from phmap.errors import ConfigurationError, StructureFetchError, StructureNotFoundError
 from phmap.inputs import load_pymol_view, validate_run_inputs, validate_structure_files
-from phmap.models import STRUCTURE_SUFFIXES, InputValidationError, RunInputs, structure_format
+from phmap.models import (
+    STRUCTURE_SUFFIXES,
+    InputValidationError,
+    RunInputs,
+    structure_format,
+    structure_suffix,
+)
 from phmap.structure_formats import validate_mmcif
 from phmap.structures import fetch_structure, normalize_pdb_id, structure_source
 
@@ -220,6 +226,53 @@ def create_app(
                     ligand_path = None
                     if isinstance(ligand, UploadFile) and ligand.filename:
                         ligand_path = await _save_upload(ligand, root / "ligand", suffix=".mol2")
+                    source = None
+                    saved_paths: dict[str, Path] = {}
+                    if settings.source_run_id is not None:
+                        source = await run_in_threadpool(
+                            jobs.load_template, settings.source_run_id,
+                        )
+                        for row in rows:
+                            if row.saved_protein_id is not None:
+                                saved = await run_in_threadpool(
+                                    source.protein, row.saved_protein_id,
+                                )
+                                staged_size = sum(
+                                    path.stat().st_size
+                                    for path in root.rglob("*") if path.is_file()
+                                )
+                                if staged_size + saved.path.stat().st_size > _MAX_UPLOAD:
+                                    raise InputValidationError("Total saved input exceeds 64 MiB")
+                                destination = root / "saved" / (
+                                    row.saved_protein_id + structure_suffix(saved.path)
+                                )
+                                saved_paths[row.saved_protein_id] = await run_in_threadpool(
+                                    saved.copy_to, destination,
+                                )
+                        if settings.reuse_view:
+                            if view_path is not None:
+                                raise InputValidationError(
+                                    "Choose a saved camera or an upload, not both",
+                                )
+                            saved_view = source.view()
+                            if saved_view is None:
+                                raise InputValidationError("The source run has no saved camera")
+                            view_path = root / "saved-view.txt"
+                            view_path.write_text(
+                                ", ".join(repr(value) for value in saved_view.values),
+                                encoding="utf-8",
+                            )
+                        if settings.reuse_ligand:
+                            if ligand_path is not None:
+                                raise InputValidationError(
+                                    "Choose a saved ligand or an upload, not both",
+                                )
+                            saved_ligand = await run_in_threadpool(source.ligand)
+                            if saved_ligand is None:
+                                raise InputValidationError("The source has no saved shared ligand")
+                            ligand_path = await run_in_threadpool(
+                                saved_ligand.copy_to, root / "saved-ligand.mol2",
+                            )
                     if sum(path.stat().st_size for path in root.rglob("*") if path.is_file()) > (
                         _MAX_UPLOAD
                     ):
@@ -231,6 +284,8 @@ def create_app(
                     for row in rows:
                         if row.pdb_id is not None:
                             paths.append(await resolve_pdb(row.pdb_id))
+                        elif row.saved_protein_id is not None:
+                            paths.append(saved_paths[row.saved_protein_id])
                         else:
                             assert row.upload_index is not None
                             paths.append(uploaded[row.upload_index])
@@ -241,6 +296,7 @@ def create_app(
                     inputs = await run_in_threadpool(
                         validate_run_inputs,
                         paths, labels=settings.labels or None, view_file=view_path,
+                        protein_ids=[row.saved_protein_id for row in rows],
                         ligand=ligand_path,
                         ph_values=settings.ph_values if settings.ph_mode == "explicit" else None,
                         ph_range=(settings.ph_start, settings.ph_stop, settings.ph_step)
@@ -253,6 +309,7 @@ def create_app(
                         return {"valid": True, **summary}
                     run_id = await run_in_threadpool(
                         jobs.submit, inputs, options, name=settings.name,
+                        based_on=None if source is None else source.based_on,
                     )
                     return {"run_id": run_id, **summary}
         except ValidationError as exc:
@@ -263,6 +320,10 @@ def create_app(
             raise HTTPException(422, messages) from exc
         except (InputValidationError, ConfigurationError, ValueError) as exc:
             raise HTTPException(422, str(exc)) from exc
+        except (KeyError, TypeError, OSError) as exc:
+            raise HTTPException(
+                422, "Saved run inputs or metadata are missing or unreadable",
+            ) from exc
 
     @app.post("/api/validate")
     async def validate(request: Request) -> dict[str, Any]:
@@ -278,6 +339,17 @@ def create_app(
             return jobs.snapshot(run_id)
         except (FileNotFoundError, KeyError, TypeError) as exc:
             raise HTTPException(404, "Run not found or its manifest is unreadable") from exc
+
+    @app.get("/api/runs/{run_id}/template")
+    def template(run_id: str) -> dict[str, Any]:
+        try:
+            return jobs.template(run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, "Run not found") from exc
+        except ConfigurationError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except (KeyError, TypeError, ValueError, OSError) as exc:
+            raise HTTPException(422, "Saved run settings or inputs are unreadable") from exc
 
     @app.post("/api/runs/{run_id}/cancel")
     def cancel(run_id: str) -> dict[str, Any]:

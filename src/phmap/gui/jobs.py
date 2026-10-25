@@ -15,15 +15,17 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from phmap.configuration import WorkflowOptions
+from phmap.configuration import WorkflowOptions, build_run_configuration
 from phmap.errors import ConfigurationError
 from phmap.json_state import read_json, write_json
 from phmap.locking import LocalLock
-from phmap.manifest import finish_task_state, utc_now
+from phmap.manifest import finish_task_state, sha256_file, utc_now
 from phmap.models import RunInputs, structure_suffix
 from phmap.processes import hidden_process_options, terminate_tree
-from phmap.structures import copy_structure_source
+from phmap.structures import copy_structure_source, structure_source
 from phmap.workspace import default_run_id
+
+from .run_templates import RunTemplate
 
 TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
@@ -34,8 +36,12 @@ def build_worker_argv(inputs: RunInputs, options: WorkflowOptions) -> list[str]:
 
     argv = [sys.executable, "-m", "phmap", "--debug", "run"]
     argv.extend(str(protein.path) for protein in inputs.proteins)
-    for ph in inputs.ph_values:
-        argv.extend(("--ph", str(ph)))
+    if inputs.ph_range is not None:
+        argv.extend(("--ph-range", str(inputs.ph_range.start),
+                     str(inputs.ph_range.stop), str(inputs.ph_range.step)))
+    else:
+        for ph in inputs.ph_values:
+            argv.extend(("--ph", str(ph)))
     for protein in inputs.proteins:
         argv.extend(("--protein-id", protein.protein_id, "--label", protein.label))
     argv.extend((
@@ -106,7 +112,10 @@ class JobManager:
         self._jobs[run_id]["updated_at"] = utc_now()
         write_json(self.records / f"{run_id}.json", self._jobs[run_id])
 
-    def submit(self, inputs: RunInputs, options: WorkflowOptions, *, name: str = "") -> str:
+    def submit(
+        self, inputs: RunInputs, options: WorkflowOptions, *, name: str = "",
+        based_on: dict[str, str] | None = None,
+    ) -> str:
         with self._condition:
             if self._closing or self._thread is None:
                 raise ConfigurationError("The calculation queue is unavailable")
@@ -126,7 +135,10 @@ class JobManager:
                     if not ligand.exists():
                         shutil.copy2(protein.ligand, ligand)
                 proteins.append(type(protein)(pdb, protein.protein_id, protein.label, ligand))
-            staged = RunInputs(proteins, inputs.ph_values, view=inputs.view, ph_mode=inputs.ph_mode)
+            staged = RunInputs(
+                proteins, inputs.ph_values, view=inputs.view, ph_mode=inputs.ph_mode,
+                ph_range=inputs.ph_range,
+            )
             options = replace(options, output_dir=self.runs_dir / run_id)
             argv = build_worker_argv(staged, options)
             if inputs.view is not None:
@@ -135,20 +147,29 @@ class JobManager:
                     ", ".join(repr(value) for value in inputs.view.values), encoding="utf-8"
                 )
                 argv.extend(("--view", str(view_path)))
+            saved_inputs = []
+            digests: dict[Path, str] = {}
+            for protein in staged.proteins:
+                for role, path in (
+                    (f"protein:{protein.protein_id}", protein.path),
+                    (f"ligand:{protein.protein_id}", protein.ligand),
+                ):
+                    if path is not None:
+                        if path not in digests:
+                            digests[path] = sha256_file(path)
+                        source = structure_source(path) if path == protein.path else {}
+                        saved_inputs.append({
+                            "role": role, "staged_path": str(path), "sha256": digests[path],
+                            **({"source": source} if source else {}),
+                        })
             self._jobs[run_id] = {
                 "run_id": run_id, "name": name.strip()[:120] or " / ".join(
                     protein.label for protein in inputs.proteins
                 ),
                 "status": "queued", "created_at": utc_now(), "argv": argv,
-                "configuration": {
-                    "proteins": [
-                        {"id": p.protein_id, "label": p.label} for p in inputs.proteins
-                    ],
-                    "ph_values": [str(ph) for ph in inputs.ph_values],
-                    "ph_mode": inputs.ph_mode.value,
-                    "render": options.render_configuration(),
-                    "composition": options.composition_configuration(inputs.ph_values),
-                },
+                **({"based_on": based_on} if based_on else {}),
+                "configuration": build_run_configuration(staged, options),
+                "inputs": saved_inputs,
             }
             self._save(run_id)
             self._queue.append(run_id)
@@ -217,6 +238,13 @@ class JobManager:
                     error = manifest.get("error") or self.log_tail(
                         self.records / f"{run_id}.stderr.log"
                     ) or f"Worker exited with status {process.returncode}"
+                based_on = self._jobs[run_id].get("based_on")
+                if based_on:
+                    path = self.runs_dir / run_id / "manifest.json"
+                    manifest = read_json(path)
+                    if manifest:
+                        manifest["based_on"] = based_on
+                        write_json(path, manifest)
                 self._jobs[run_id].update(
                     status=status, error=error, returncode=process.returncode,
                     finished_at=utc_now(),
@@ -276,6 +304,21 @@ class JobManager:
             raise FileNotFoundError("Run not found")
         return root, record, manifest
 
+    def template(self, run_id: str) -> dict[str, Any]:
+        _, record, manifest = self._read_state(run_id)
+        name = self._summary(run_id, record, manifest)["name"]
+        return self.load_template(run_id).response(name=name)
+
+    def load_template(self, run_id: str) -> RunTemplate:
+        root, _, _ = self._read_state(run_id)
+        manifest = root / "manifest.json"
+        if manifest.exists() or manifest.is_symlink():
+            return RunTemplate(root)
+        return RunTemplate(
+            root, submission_path=self.records / f"{run_id}.json",
+            input_root=self.uploads / run_id,
+        )
+
     @staticmethod
     def _summary(
         run_id: str, record: dict[str, Any], manifest: dict[str, Any],
@@ -286,7 +329,10 @@ class JobManager:
         proteins = configuration.get("proteins", [])
         status = record.get("status") or manifest.get("status", "unknown")
         # A CLI run can finish before the queue thread updates its own record.
-        if status == "running" and manifest.get("status") in TERMINAL:
+        if (
+            status == "running" and manifest.get("status") in TERMINAL
+            and not record.get("based_on")
+        ):
             status = manifest["status"]
         return {
             "run_id": run_id, "name": record.get("name") or " / ".join(
@@ -335,6 +381,9 @@ class JobManager:
             "manifest": "manifest.json" if manifest else None,
             "error": record.get("error") or manifest.get("error"),
             "can_cancel": bool(record) and summary["status"] not in TERMINAL,
+            "can_template": (
+                summary["status"] in TERMINAL and bool(manifest or record.get("inputs"))
+            ),
             "worker_log": self.log_tail(self.records / f"{run_id}.stderr.log") if record else "",
         }
 

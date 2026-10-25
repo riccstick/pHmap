@@ -119,6 +119,11 @@ History includes both GUI runs and CLI runs in the same `runs/` directory. Files
 are processed locally, with no remote calculation services or scripts. Optional
 structure fetching contacts the official RCSB archive; your variant files are
 never sent there. Verified cached downloads can be reused offline.
+Select a finished history item and click **Use as template** to load its saved
+structures, camera, shared ligand, pH selection, and styling into the form.
+Edit anything you need, then start a separate full calculation; the original
+result stays unchanged. Newly cancelled queued jobs retain a reusable setup too.
+See [reusing a calculation](docs/tutorial.md#reuse-a-calculation-from-history).
 Closing the browser tab does not stop calculations; stopping the GUI server
 with Ctrl+C (or quitting the desktop launcher) cancels its unfinished jobs and
 preserves their files and logs.
