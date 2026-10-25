@@ -437,6 +437,28 @@ def test_pymol_script_quotes_paths_and_serialises_numeric_view(tmp_path: Path) -
         build_pymol_script(control_path_request)
 
 
+@pytest.mark.parametrize("mode", range(5))
+@pytest.mark.parametrize("representation", ["sticks", "lines", "dots", "spheres", None])
+@pytest.mark.parametrize("solvent,above", [(False, True), (True, False)])
+def test_pymol_script_preserves_each_advanced_render_setting(
+    tmp_path: Path, mode: int, representation, solvent: bool, above: bool,
+) -> None:  # type: ignore[no-untyped-def]
+    script = build_pymol_script(PyMOLRenderRequest(
+        tmp_path / "protein-ligand.pqr", tmp_path / "potential.dx", tmp_path / "surface.png",
+        options=PyMOLRenderOptions(
+            surface_mode=mode, surface_solvent=solvent, surface_ramp_above_mode=above,
+            ligand_representation=representation,
+        ),
+    ))
+    assert f"set surface_mode, {mode}\n" in script
+    assert f"set surface_solvent, {int(solvent)}\n" in script
+    assert f"set surface_ramp_above_mode, {int(above)}\n" in script
+    if representation is None:
+        assert "molecule and hetatm" not in script
+    else:
+        assert f"show {representation}, molecule and hetatm\n" in script
+
+
 def test_pymol_backend_writes_script_and_validates_png(tmp_path: Path) -> None:
     tool = _executable(
         tmp_path,

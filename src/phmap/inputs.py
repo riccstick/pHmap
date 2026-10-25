@@ -371,6 +371,10 @@ def validate_run_inputs(
         labels=labels,
         ligand=ligand,
     )
-    values, mode = parse_ph_selection(ph_values=ph_values, ph_range=ph_range)
+    saved_range = (
+        None if ph_range is None else ph_range if isinstance(ph_range, PHRange)
+        else parse_ph_range(ph_range)
+    )
+    values, mode = parse_ph_selection(ph_values=ph_values, ph_range=saved_range)
     view = None if view_file is None else load_pymol_view(view_file)
-    return RunInputs(proteins, values, view=view, ph_mode=mode)
+    return RunInputs(proteins, values, view=view, ph_mode=mode, ph_range=saved_range)

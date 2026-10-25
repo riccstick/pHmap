@@ -33,4 +33,19 @@ while (selection.rows.length < 32) selection.addPdb("3SQR");
 assert.throws(() => selection.addPdb("3SQR"), /32/);
 assert.throws(() => selection.addFiles([{ name: "overflow.cif" }]), /32/);
 assert.equal(selection.rows.length, 32);
+const sameRows = selection.rows;
+selection.loadSaved([
+  { id: "wt", filename: "wt.cif", label: "Wild type" },
+  { id: "mut", filename: "mut.pdb", label: "Mutant" },
+]);
+assert.equal(selection.rows, sameRows, "Keep the array held by the page controller.");
+selection.addFiles([{ name: "variant.mmcif" }]);
+selection.addPdb("3SQR");
+[selection.rows[0], selection.rows[1]] = [selection.rows[1], selection.rows[0]];
+assert.deepEqual(plain(selection.inputs().structures), [
+  { saved_protein_id: "mut" }, { saved_protein_id: "wt" }, { upload_index: 0 }, { pdb_id: "3SQR" },
+]);
+assert.equal(selection.inputs().uploads.length, 1);
+selection.loadSaved([]);
+assert.equal(selection.rows.length, 0);
 console.log("Protein-selection checks passed");

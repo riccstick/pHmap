@@ -14,6 +14,7 @@ from phmap.backends import (
     CommandStartError,
     CommandTimeoutError,
 )
+from phmap.errors import ConfigurationError
 from phmap.inputs import validate_run_inputs
 from phmap.workflow import LocalWorkflow, WorkflowOptions
 
@@ -98,6 +99,40 @@ def test_mmcif_bytes_are_preserved_and_staged_with_a_backend_compatible_suffix(
     assert command[-2].endswith("variant.backend.pdb")
     assert manifest["inputs"][1]["role"] == "backend-protein:variant"
     assert (result.workspace.inputs / "variant.backend.pdb").is_file()
+
+
+def test_publication_settings_are_manifested_without_changing_scientific_ph(tmp_path: Path) -> None:
+    pdb2pqr, apbs, pymol = _fake_tools(tmp_path)
+    options = WorkflowOptions(
+        output_dir=tmp_path / "styled", size=64, ray_trace=False, dpi=450,
+        font_size=34, outer_margin=0, column_gap=27, row_gap=39, label_gap=10,
+        show_colorbar=False, ph_label_precision=1, foreground="#555555",
+        pdb2pqr_executable=pdb2pqr, apbs_executable=apbs, pymol_executable=pymol,
+    )
+    result = LocalWorkflow(
+        validate_run_inputs(_input_pdb(tmp_path), ph_values=["5.125", "7.5"]), options,
+    ).run()
+    data = json.loads(result.manifest.read_text(encoding="utf-8"))
+    assert data["configuration"]["ph_values"] == ["5.125", "7.5"]
+    styling = data["configuration"]["composition"]
+    assert styling["ph_labels"] == ["5.1", "7.5"]
+    assert styling["font_size"] == 34 and styling["outer_margin"] == 0
+    assert styling["column_gap"] == 27 and styling["row_gap"] == 39
+    assert styling["label_gap"] == 10 and styling["show_colorbar"] is False
+    assert styling["font"] == "pillow-default"
+    for task in data["tasks"]:
+        assert f"--with-ph={task['ph']}" in task["stages"][0]["argv"]
+    with Image.open(result.figure) as figure:
+        assert figure.info["dpi"] == pytest.approx((450, 450), abs=0.02)
+
+
+def test_colliding_ph_labels_fail_before_workspace_or_tools(tmp_path: Path) -> None:
+    inputs = validate_run_inputs(_input_pdb(tmp_path), ph_values=["5.11", "5.14"])
+    with pytest.raises(ConfigurationError, match="same label"):
+        LocalWorkflow(
+            inputs, WorkflowOptions(output_dir=tmp_path / "invalid", ph_label_precision=1),
+        )
+    assert not (tmp_path / "invalid").exists()
 
 
 def test_backend_failure_marks_manifest_and_keeps_logs(tmp_path: Path) -> None:

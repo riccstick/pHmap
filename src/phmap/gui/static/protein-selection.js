@@ -32,11 +32,18 @@ class ProteinSelection {
     this.rows.push({ pdbId, label: this.uniqueLabel(pdbId) });
   }
 
+  loadSaved(proteins) {
+    if (proteins.length > 32) throw new Error("Use at most 32 protein structures per comparison.");
+    const rows = proteins.map((p) => ({ savedProteinId: p.id, filename: p.filename, label: p.label }));
+    this.rows.splice(0, this.rows.length, ...rows);
+  }
+
   inputs() {
     let uploadIndex = 0;
     return {
       labels: this.rows.map((p) => p.label),
-      structures: this.rows.map((p) => p.file ? { upload_index: uploadIndex++ } : { pdb_id: p.pdbId }),
+      structures: this.rows.map((p) => p.file ? { upload_index: uploadIndex++ }
+        : p.savedProteinId ? { saved_protein_id: p.savedProteinId } : { pdb_id: p.pdbId }),
       uploads: this.rows.filter((p) => p.file).map((p) => p.file),
     };
   }

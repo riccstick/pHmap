@@ -12,6 +12,12 @@ let busy = false;
 let fetching = false;
 let lastLogPaths = "";
 let selectedStatus = null;
+let selectedCanTemplate = false;
+let templateSource = null;
+let reuseView = false;
+let reuseLigand = false;
+let templateAbort = null;
+let pdbAbort = null;
 const selection = new RunSelection({
   load: (runId, options) => api(`/api/runs/${encodeURIComponent(runId)}`, options),
   terminal,
@@ -54,15 +60,20 @@ function message(text, error = false) {
 }
 
 function updateButtons() {
-  $("submit").disabled = busy || fetching || !proteins.length || !toolsReady;
-  $("validate").disabled = busy || fetching || !proteins.length;
-  $("fetch-pdb").disabled = busy || fetching;
+  const loading = templateAbort !== null;
+  $("submit").disabled = busy || fetching || loading || !proteins.length || !toolsReady;
+  $("validate").disabled = busy || fetching || loading || !proteins.length;
+  $("fetch-pdb").disabled = busy || fetching || loading;
   $("fetch-pdb").textContent = fetching ? "Fetching…" : "Add PDB entry";
-  $("proteins").disabled = busy;
+  $("proteins").disabled = busy || loading;
+  $("use-template").disabled = busy || fetching || loading || !selectedCanTemplate;
+  $("use-template").textContent = loading ? "Loading setup…" : "Use as template";
+  $("run-form").inert = loading;
   $("submit").textContent = busy ? "Submitting…" : "Start calculation →";
 }
 
 function setProteins(files) {
+  if (templateAbort) return;
   try {
     proteinSelection.addFiles(files);
     $("proteins").value = "";
@@ -74,28 +85,42 @@ function setProteins(files) {
 }
 
 async function addPdb() {
-  if (busy || fetching) return;
+  if (busy || fetching || templateAbort) return;
   const pdbId = $("pdb-code").value.trim();
   if (!pdbId) { message("Enter a PDB ID, for example 3SQR.", true); return; }
   if (proteins.length >= 32) { message("Use at most 32 protein structures per comparison.", true); return; }
   fetching = true;
+  const controller = new AbortController();
+  pdbAbort = controller;
   updateButtons();
   message(`Fetching ${pdbId} from RCSB PDB…`);
   try {
     const result = await api("/api/structures/fetch", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pdb_id: pdbId }),
+      signal: controller.signal,
     });
+    if (controller.signal.aborted || pdbAbort !== controller) return;
     proteinSelection.addPdb(result.pdb_id);
     $("pdb-code").value = "";
     renderProteins();
     message(`${result.pdb_id} added as PDBx/mmCIF. Add local variant files to compare them.`);
   } catch (error) {
-    message(error.message, true);
+    if (!controller.signal.aborted && pdbAbort === controller) message(error.message, true);
   } finally {
-    fetching = false;
-    updateButtons();
+    if (pdbAbort === controller) {
+      pdbAbort = null;
+      fetching = false;
+      updateButtons();
+    }
   }
+}
+
+function cancelPdbFetch() {
+  if (pdbAbort) pdbAbort.abort();
+  pdbAbort = null;
+  fetching = false;
+  updateButtons();
 }
 
 function renderProteins() {
@@ -103,7 +128,8 @@ function renderProteins() {
   list.replaceChildren();
   proteins.forEach((protein, index) => {
     const row = node("div", undefined, "protein-item");
-    const name = protein.file ? protein.file.name : `${protein.pdbId} · RCSB PDB`;
+    const name = protein.file ? protein.file.name
+      : protein.savedProteinId ? `${protein.filename} · saved input` : `${protein.pdbId} · RCSB PDB`;
     const filename = node("span", `${index + 1}. ${name}`, "filename");
     filename.title = name;
     const label = node("input");
@@ -177,9 +203,23 @@ function formData() {
     labels: inputs.labels, structures: inputs.structures, size: Number($("size").value),
     dpi: Number($("dpi").value), level: Number($("level").value),
     background: background === "transparent" ? null : background,
-    foreground: background === "black" ? "white" : "black",
+    foreground: $("foreground").value === "auto"
+      ? (background === "black" ? "white" : "black") : $("foreground").value,
     ramp_colors: $("ramp").value.split(","), force_field: $("force-field").value,
     ray_trace: $("ray").checked,
+    surface_mode: Number($("surface-mode").value),
+    surface_solvent: $("surface-solvent").checked,
+    surface_ramp_above_mode: $("surface-ramp-above-mode").checked,
+    ligand_representation: $("ligand-representation").value === "none"
+      ? null : $("ligand-representation").value,
+    font_size: Number($("font-size").value), outer_margin: Number($("outer-margin").value),
+    column_gap: Number($("column-gap").value), row_gap: Number($("row-gap").value),
+    label_gap: Number($("label-gap").value), show_colorbar: $("legend").checked,
+    ph_label_precision: $("ph-label-precision").value === ""
+      ? null : Number($("ph-label-precision").value),
+    source_run_id: templateSource,
+    reuse_view: reuseView && !$("view").files.length,
+    reuse_ligand: reuseLigand && !$("ligand").files.length,
   };
   const data = new FormData();
   data.append("settings", JSON.stringify(settings));
@@ -190,7 +230,7 @@ function formData() {
 }
 
 async function send(validateOnly) {
-  if (!proteins.length || busy || fetching) return;
+  if (!proteins.length || busy || fetching || templateAbort) return;
   if (proteins.some((p) => p.file && !/\.(pdb|cif|mmcif)$/i.test(p.file.name))) {
     message("All protein structures must be .pdb, .cif or .mmcif files.", true);
     return;
@@ -277,6 +317,12 @@ function artifactUrl(runId, path, download = false) {
 function renderRun(run) {
   if (selected !== run.run_id) return;
   selectedStatus = run.status;
+  selectedCanTemplate = Boolean(run.can_template);
+  $("use-template").hidden = !terminal.has(run.status);
+  $("use-template").title = selectedCanTemplate
+    ? "Load saved settings and inputs into a new calculation"
+    : "This older job has no saved setup available to restore";
+  updateButtons();
   $("empty-state").hidden = true;
   $("run-detail").hidden = false;
   $("run-title").textContent = run.name || run.run_id;
@@ -353,8 +399,11 @@ function renderRun(run) {
 }
 
 async function selectRun(runId) {
+  cancelTemplateLoad();
   selected = runId;
   selectedStatus = null;
+  selectedCanTemplate = false;
+  updateButtons();
   lastLogPaths = "";
   $("log-select").value = "";
   $("log-content").textContent = "Select a stage log to inspect its latest output.";
@@ -362,6 +411,74 @@ async function selectRun(runId) {
     button.classList.toggle("selected", button.dataset.runId === runId);
   });
   await selection.select(runId);
+}
+
+function syncPhMode() {
+  const range = phMode() === "range";
+  $("range-fields").hidden = !range;
+  $("explicit-fields").hidden = range;
+  ["ph-start", "ph-stop", "ph-step"].forEach((id) => { $(id).required = range; });
+  $("ph-values").required = !range;
+  updateCount();
+}
+
+function syncSavedInputs() {
+  $("template-notice").hidden = templateSource === null;
+  $("template-source").textContent = templateSource || "";
+  $("saved-view").hidden = !reuseView;
+  $("saved-ligand").hidden = !reuseLigand;
+}
+
+function applyTemplate(data) {
+  const form = templateFormValues(data.settings);
+  $("run-form").reset();
+  for (const [id, value] of Object.entries(form.values)) {
+    const control = $(id);
+    const text = String(value);
+    if (control.tagName === "SELECT" && !Array.from(control.options).some((option) => option.value === text)) {
+      const option = node("option", `${text} (saved)`);
+      option.value = text;
+      control.append(option);
+    }
+    control.value = text;
+  }
+  for (const [id, checked] of Object.entries(form.checked)) $(id).checked = checked;
+  document.querySelectorAll('input[name="ph-mode"]').forEach((input) => {
+    input.checked = input.value === form.phMode;
+  });
+  templateSource = data.settings.source_run_id;
+  reuseView = data.has_view;
+  reuseLigand = data.has_ligand;
+  proteinSelection.loadSaved(data.proteins);
+  syncSavedInputs();
+  syncPhMode();
+  renderProteins();
+}
+
+function cancelTemplateLoad() {
+  if (templateAbort) templateAbort.abort();
+  templateAbort = null;
+  updateButtons();
+}
+
+async function useTemplate() {
+  if (!selected || !selectedCanTemplate || busy || fetching || templateAbort) return;
+  const runId = selected;
+  const controller = new AbortController();
+  templateAbort = controller;
+  updateButtons();
+  message("Loading the saved settings and checking input files…");
+  try {
+    const data = await api(`/api/runs/${encodeURIComponent(runId)}/template`, { signal: controller.signal });
+    if (controller.signal.aborted || selected !== runId) return;
+    applyTemplate(data);
+    message("Setup loaded. Change any settings, then Start calculation to create a separate new run.");
+    $("run-name").scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch (error) {
+    if (!controller.signal.aborted && selected === runId) message(error.message, true);
+  } finally {
+    if (templateAbort === controller) { templateAbort = null; updateButtons(); }
+  }
 }
 
 async function loadLog() {
@@ -384,19 +501,17 @@ $("pdb-code").addEventListener("keydown", (event) => {
 $("file-drop").addEventListener("dragover", (event) => { event.preventDefault(); $("file-drop").classList.add("dragging"); });
 $("file-drop").addEventListener("dragleave", () => $("file-drop").classList.remove("dragging"));
 $("file-drop").addEventListener("drop", (event) => { event.preventDefault(); $("file-drop").classList.remove("dragging"); setProteins(event.dataTransfer.files); });
-document.querySelectorAll('input[name="ph-mode"]').forEach((input) => input.addEventListener("change", () => {
-  const range = phMode() === "range";
-  $("range-fields").hidden = !range;
-  $("explicit-fields").hidden = range;
-  ["ph-start", "ph-stop", "ph-step"].forEach((id) => { $(id).required = range; });
-  $("ph-values").required = !range;
-  updateCount();
-}));
+document.querySelectorAll('input[name="ph-mode"]').forEach((input) => input.addEventListener("change", syncPhMode));
 ["ph-start", "ph-stop", "ph-step", "ph-values"].forEach((id) => $(id).addEventListener("input", updateCount));
 $("run-form").addEventListener("submit", (event) => { event.preventDefault(); send(false); });
 $("validate").onclick = () => send(true);
 $("refresh-history").onclick = refreshHistory;
 $("recheck-tools").onclick = checkTools;
+$("use-template").onclick = useTemplate;
+$("clear-saved-view").onclick = () => { reuseView = false; syncSavedInputs(); };
+$("clear-saved-ligand").onclick = () => { reuseLigand = false; syncSavedInputs(); };
+$("view").addEventListener("change", () => { if ($("view").files.length) reuseView = false; syncSavedInputs(); });
+$("ligand").addEventListener("change", () => { if ($("ligand").files.length) reuseLigand = false; syncSavedInputs(); });
 $("log-select").onchange = loadLog;
 $("logs-details").addEventListener("toggle", () => { if ($("logs-details").open) loadLog(); });
 $("cancel").onclick = async () => {
@@ -409,9 +524,21 @@ $("cancel").onclick = async () => {
   } catch (error) { message(error.message, true); $("cancel").disabled = false; }
 };
 $("new-run").onclick = () => {
+  cancelPdbFetch();
+  cancelTemplateLoad();
+  $("run-form").reset();
+  proteinSelection.loadSaved([]);
+  templateSource = null;
+  reuseView = false;
+  reuseLigand = false;
+  syncSavedInputs();
+  syncPhMode();
+  renderProteins();
   selection.close();
   selected = null;
   selectedStatus = null;
+  selectedCanTemplate = false;
+  updateButtons();
   $("run-detail").hidden = true;
   $("empty-state").hidden = false;
   message("");
@@ -422,6 +549,8 @@ const logTimer = setInterval(() => {
   if (selected && !terminal.has(selectedStatus) && $("logs-details").open) loadLog();
 }, 2000);
 window.addEventListener("pagehide", () => {
+  cancelPdbFetch();
+  cancelTemplateLoad();
   selection.close();
   clearInterval(logTimer);
 });

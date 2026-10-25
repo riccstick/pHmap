@@ -6,7 +6,10 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("script", ["run-selection.mjs", "protein-selection.mjs"])
+@pytest.mark.parametrize("script", [
+    "run-selection.mjs", "protein-selection.mjs", "render-settings.mjs", "template-settings.mjs",
+    "request-races.mjs",
+])
 def test_frontend_controllers(script: str) -> None:
     node = shutil.which("node")
     if node is None:

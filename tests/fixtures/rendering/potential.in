@@ -1,0 +1,26 @@
+read
+    mol pqr fixture.pqr
+end
+elec
+    mg-auto
+    dime 33 33 33
+    cglen 40 40 40
+    fglen 30 30 30
+    cgcent mol 1
+    fgcent mol 1
+    mol 1
+    lpbe
+    bcfl sdh
+    pdie 2.0
+    sdie 78.54
+    srfm smol
+    chgm spl2
+    sdens 10.0
+    srad 1.4
+    swin 0.3
+    temp 298.15
+    calcenergy no
+    calcforce no
+    write pot dx potential
+end
+quit

@@ -90,6 +90,9 @@ jobs:
       - name: Real scientific smoke run
         if: needs.changes.outputs.docs_only != 'true'
         run: pixi run --locked smoke
+      - name: Advanced surface and ligand rendering smoke
+        if: needs.changes.outputs.docs_only != 'true'
+        run: pixi run --locked smoke-rendering
       - name: Verify release tag matches version
         if: needs.changes.outputs.docs_only != 'true' && startsWith(github.ref, 'refs/tags/')
         env:

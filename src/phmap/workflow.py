@@ -23,11 +23,12 @@ from phmap.backends import (
     discover_executable,
     pdb2pqr_dx_path,
 )
-from phmap.compose import RenderedTile, compose_grid
+from phmap.compose import RenderedTile, compose_grid, format_ph_labels
 from phmap.configuration import WorkflowOptions as WorkflowOptions
+from phmap.configuration import build_run_configuration as _configuration
 from phmap.errors import ConfigurationError
 from phmap.manifest import RunManifest, sha256_file, utc_now
-from phmap.models import RunInputs, structure_format, structure_suffix
+from phmap.models import RunInputs, structure_suffix
 from phmap.scientific import summarize_opendx, summarize_pqr
 from phmap.structure_formats import mmcif_preparation_info, prepare_mmcif
 from phmap.structures import structure_source
@@ -122,44 +123,13 @@ def _failed_stage_dict(
     return details
 
 
-def _configuration(inputs: RunInputs, options: WorkflowOptions) -> dict[str, Any]:
-    return {
-        "proteins": [
-            {
-                "id": protein.protein_id,
-                "label": protein.label,
-                "path": str(protein.path),
-                "format": structure_format(protein.path),
-                "ligand": None if protein.ligand is None else str(protein.ligand),
-            }
-            for protein in inputs.proteins
-        ],
-        "ph_values": [str(ph) for ph in inputs.ph_values],
-        "ph_mode": inputs.ph_mode.value,
-        "view": None if inputs.view is None else list(inputs.view.values),
-        "render": {
-            "size": options.size,
-            "dpi": options.dpi,
-            "potential_level": options.potential_level,
-            "ramp_colors": list(options.ramp_colors),
-            "background": options.background,
-            "foreground": options.foreground,
-            "ray_trace": options.ray_trace,
-        },
-        "scientific": {
-            "force_field": options.force_field,
-            "titration_state_method": "propka",
-            "drop_water": True,
-        },
-    }
-
-
 class LocalWorkflow:
     """Run the deterministic local calculation and rendering workflow."""
 
     def __init__(self, inputs: RunInputs, options: WorkflowOptions | None = None) -> None:
         self.inputs = inputs
         self.options = options or WorkflowOptions()
+        format_ph_labels(inputs.ph_values, self.options.ph_label_precision)
 
     def _create_workspace(self) -> RunWorkspace:
         if self.options.output_dir is not None:

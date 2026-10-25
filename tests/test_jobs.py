@@ -1,12 +1,87 @@
 import threading
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+from phmap.cli import build_parser
 from phmap.configuration import WorkflowOptions
 from phmap.errors import ConfigurationError
-from phmap.gui.jobs import JobManager, write_json
+from phmap.gui.jobs import JobManager, build_worker_argv, write_json
 from phmap.inputs import validate_run_inputs
+
+
+@pytest.mark.parametrize("mode", range(5))
+@pytest.mark.parametrize("representation", ["sticks", "lines", "dots", "spheres", None])
+@pytest.mark.parametrize("solvent,above", [
+    (False, True), (True, False), (True, True), (False, False),
+])
+def test_advanced_render_settings_survive_worker_serialization(
+    tmp_path: Path, mode: int, representation, solvent: bool, above: bool,
+) -> None:  # type: ignore[no-untyped-def]
+    path = tmp_path / "input.pdb"
+    path.write_text("ATOM\n", encoding="utf-8")
+    options = WorkflowOptions(
+        output_dir=tmp_path / "run", surface_mode=mode, surface_solvent=solvent,
+        surface_ramp_above_mode=above, ligand_representation=representation,
+    )
+    inputs = validate_run_inputs(path, ph_values=["7"])
+    arguments = build_worker_argv(inputs, options)
+    # Workers run `python -m phmap`; parse their arguments with the actual CLI.
+    parsed = build_parser().parse_args(arguments[3:])
+    assert parsed.surface_mode == mode
+    assert parsed.surface_solvent is solvent
+    assert parsed.surface_ramp_above_mode is above
+    assert parsed.ligand_representation == (representation or "none")
+
+
+@pytest.mark.parametrize("precision", [None, 0, 2])
+@pytest.mark.parametrize("legend", [False, True])
+def test_publication_settings_survive_worker_serialization(
+    tmp_path: Path, precision: int | None, legend: bool,
+) -> None:
+    path = tmp_path / "input.pdb"
+    path.write_text("ATOM\n", encoding="utf-8")
+    inputs = validate_run_inputs(path, ph_values=["5.125", "7.5"])
+    options = WorkflowOptions(
+        font_size=36, outer_margin=0, column_gap=22, row_gap=35, label_gap=10,
+        show_colorbar=legend, ph_label_precision=precision, foreground="#555555",
+    )
+    parsed = build_parser().parse_args(build_worker_argv(inputs, options)[3:])
+    assert parsed.font_size == 36
+    assert parsed.outer_margin == 0
+    assert parsed.column_gap == 22 and parsed.row_gap == 35
+    assert parsed.label_gap == 10
+    assert parsed.show_colorbar is legend
+    assert parsed.ph_label_precision == precision
+    assert parsed.foreground == "#555555"
+    assert tuple(Decimal(ph) for ph in parsed.ph_values) == inputs.ph_values
+
+
+def test_worker_receives_the_original_non_aligned_range(tmp_path: Path) -> None:
+    path = tmp_path / "input.pdb"
+    path.write_text("ATOM\n", encoding="utf-8")
+    inputs = validate_run_inputs(path, ph_range=("3", "8", "2"))
+    assert inputs.ph_range is not None
+    arguments = build_parser().parse_args(build_worker_argv(inputs, WorkflowOptions())[3:])
+    assert arguments.ph_range == ["3", "8", "2"]
+    assert arguments.ph_values is None
+
+
+def test_older_cancelled_jobs_without_a_snapshot_cannot_offer_a_template(tmp_path: Path) -> None:
+    records = tmp_path / "runs/.gui/jobs"
+    records.mkdir(parents=True)
+    write_json(records / "old-cancelled.json", {
+        "status": "cancelled", "configuration": {
+            "proteins": [{"id": "wt", "label": "WT"}], "ph_values": ["7"],
+        },
+    })
+    manager = JobManager(tmp_path / "runs")
+    manager.start()
+    try:
+        assert manager.snapshot("old-cancelled")["can_template"] is False
+    finally:
+        manager.close()
 
 
 def test_cancelled_waiting_jobs_immediately_free_queue_capacity(

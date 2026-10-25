@@ -60,6 +60,17 @@ def test_ph_range_does_not_invent_a_non_aligned_stop() -> None:
     )
 
 
+def test_run_inputs_preserve_and_validate_original_range(tmp_path: Path) -> None:
+    protein = ProteinInput(_pdb(tmp_path))
+    original = PHRange("3", "8", "2")
+    inputs = RunInputs([protein], ["3", "5", "7"], ph_mode="range", ph_range=original)
+    assert inputs.ph_range is original
+    with pytest.raises(InputValidationError, match="metadata"):
+        RunInputs([protein], ["3", "4"], ph_mode="range", ph_range=original)
+    with pytest.raises(InputValidationError, match="metadata"):
+        RunInputs([protein], ["3", "5", "7"], ph_range=original)
+
+
 @pytest.mark.parametrize(
     "values", [("5", "4", "1"), ("4", "5", "0"), ("4", "15", "1")]
 )

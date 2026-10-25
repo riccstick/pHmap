@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/run-selection.js" defer></script>
   <script src="/static/protein-selection.js" defer></script>
+  <script src="/static/template-settings.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -30,6 +31,7 @@
         <section class="setup-panel card">
           <div class="card-heading"><h2>Set up a calculation</h2><span class="step-badge">01 — CONFIGURE</span></div>
           <form id="run-form">
+            <p class="field-hint" id="template-notice" hidden>Setup copied from <code id="template-source"></code>. Starting creates a full new calculation; the source result is unchanged.</p>
             <label class="field-label" for="run-name">Calculation name <span class="optional">optional</span></label>
             <input id="run-name" type="text" maxlength="120" placeholder="e.g. Wild type vs mutants">
 
@@ -48,8 +50,53 @@
             <div class="calculation-count" id="calculation-count">Choose proteins to preview your calculation.</div>
 
             <details class="settings-details"><summary>Camera &amp; ligand <span>optional</span></summary><label class="field-label" for="view">PyMOL camera view</label><input id="view" type="file" accept=".txt"><p class="field-hint">An 18-number view exported from PyMOL. Without one, each structure is automatically oriented.</p><label class="field-label" for="ligand">Shared ligand <span class="optional">experimental</span></label><input id="ligand" type="file" accept=".mol2"><p class="field-hint">Applied to every supplied protein.</p></details>
+            <div id="saved-view" class="field-hint" hidden>Saved camera will be reused. Choose a camera file above to replace it, or <button id="clear-saved-view" type="button" class="text-button">remove saved camera</button>.</div>
+            <div id="saved-ligand" class="field-hint" hidden>Saved shared ligand will be reused. Choose a ligand file above to replace it, or <button id="clear-saved-ligand" type="button" class="text-button">remove saved ligand</button>.</div>
 
             <details class="settings-details"><summary>Figure &amp; calculation settings</summary><div class="two-fields"><label>Tile size, px<input id="size" type="number" min="64" max="4096" value="500"></label><label>DPI<input id="dpi" type="number" min="1" max="4800" value="300"></label><label>Potential limit, ±<input id="level" type="number" min="0.01" step="any" value="5"></label><label>Background<select id="background"><option value="white">White</option><option value="transparent">Transparent</option><option value="black">Black</option></select></label><label>Potential colors<select id="ramp"><option value="red,white,blue">Red → white → blue</option><option value="blue,white,red">Blue → white → red</option></select></label><label>Force field<select id="force-field"><option>PARSE</option><option>AMBER</option><option>CHARMM</option></select></label></div><label class="checkbox"><input id="ray" type="checkbox" checked> Ray trace final surfaces</label></details>
+
+            <details class="settings-details">
+              <summary>Publication styling</summary>
+              <div class="two-fields">
+                <label>Font size, px<input id="font-size" type="number" min="1" max="256" step="1" value="22" required></label>
+                <label>Outer margin, px<input id="outer-margin" type="number" min="0" max="1024" step="1" value="24" required></label>
+                <label>Column gap, px<input id="column-gap" type="number" min="0" max="1024" step="1" value="16" required></label>
+                <label>Row gap, px<input id="row-gap" type="number" min="0" max="1024" step="1" value="16" required></label>
+                <label>Label gap, px<input id="label-gap" type="number" min="0" max="1024" step="1" value="16" required></label>
+                <label>Label &amp; border color<select id="foreground"><option value="auto">Automatic contrast</option><option value="black">Black</option><option value="white">White</option><option value="#555555">Dark gray</option></select></label>
+              </div>
+              <label class="field-label" for="ph-label-precision">pH label decimal places</label>
+              <select id="ph-label-precision" aria-describedby="ph-label-hint"><option value="">Preserve input precision (default)</option><option value="0">0 decimal places</option><option value="1">1 decimal place</option><option value="2">2 decimal places</option><option value="3">3 decimal places</option><option value="4">4 decimal places</option><option value="5">5 decimal places</option><option value="6">6 decimal places</option></select>
+              <p class="field-hint" id="ph-label-hint">Display only: calculation pH values stay unchanged. A precision that gives different columns identical labels is rejected.</p>
+              <label class="checkbox"><input id="legend" type="checkbox" checked> Show the shared potential legend</label>
+              <p class="field-hint">Uses Pillow's bundled default font, without requiring system fonts. Font and spacing sizes are pixels; the background is set under Figure &amp; calculation settings. These options style a new calculation; editing saved runs is not available yet.</p>
+            </details>
+
+            <details class="settings-details">
+              <summary>Advanced surface &amp; ligand rendering</summary>
+              <label class="field-label" for="surface-mode">Surface atom inclusion</label>
+              <select id="surface-mode" aria-describedby="surface-mode-hint">
+                <option value="0">0 · Respect atom flags (default)</option>
+                <option value="1">1 · All atoms</option>
+                <option value="2">2 · Heavy atoms only</option>
+                <option value="3">3 · Surface-visible atoms only</option>
+                <option value="4">4 · Surface-visible heavy atoms only</option>
+              </select>
+              <p class="field-hint" id="surface-mode-hint">PyMOL modes 0–4. The default normally excludes HETATM atoms from the surface; mode 1 includes them.</p>
+              <label class="checkbox"><input id="surface-solvent" type="checkbox" aria-describedby="surface-solvent-hint"> Solvent-accessible surface</label>
+              <p class="field-hint" id="surface-solvent-hint">Unchecked uses the solvent-excluded molecular surface. This changes the displayed geometry, not the APBS calculation.</p>
+              <label class="checkbox"><input id="surface-ramp-above-mode" type="checkbox" checked aria-describedby="surface-ramp-hint"> Sample potential above the surface</label>
+              <p class="field-hint" id="surface-ramp-hint">PyMOL ramp-above mode. For a solvent-accessible surface, PyMOL's APBS interface normally turns this off. These choices remain independent.</p>
+              <label class="field-label" for="ligand-representation">Ligand representation</label>
+              <select id="ligand-representation" aria-describedby="ligand-render-hint">
+                <option value="sticks">Sticks (default)</option>
+                <option value="lines">Lines</option>
+                <option value="dots">Dots</option>
+                <option value="spheres">Spheres</option>
+                <option value="none">Hidden (no extra representation)</option>
+              </select>
+              <p class="field-hint" id="ligand-render-hint">Applies to HETATM atoms retained in the prepared PQR, not only an uploaded ligand. Hidden does not remove atoms from the calculation or an inclusive surface. Shared MOL2 parameterization remains experimental.</p>
+            </details>
 
             <div id="form-message" role="status" aria-live="polite" hidden></div>
             <div class="form-actions"><button type="button" id="validate" class="button secondary">Validate</button><button type="submit" id="submit" class="button primary" disabled>Start calculation <span>→</span></button></div>
@@ -64,6 +111,8 @@
 
           <section id="run-detail" class="card run-detail" hidden aria-live="polite">
             <div class="run-heading"><div><p class="eyebrow" id="run-origin">CALCULATION</p><h2 id="run-title"></h2><p id="run-time" class="field-hint"></p></div><span id="run-status" class="status-badge"></span></div>
+            <button id="use-template" type="button" class="button secondary small" hidden>Use as template</button>
+            <p class="field-hint">Reuse a finished run's setup, edit it, and start a separate calculation. Loading a template does not start any tools.</p>
             <div class="progress-heading"><span id="progress-label"></span><button id="cancel" class="text-button danger" type="button" hidden>Cancel calculation</button></div>
             <progress id="run-progress" value="0" max="100" aria-label="Calculation progress"></progress><p id="active-stage" class="active-stage"></p>
             <div id="run-error" class="message error" hidden></div>
