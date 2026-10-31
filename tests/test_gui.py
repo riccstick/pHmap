@@ -67,6 +67,38 @@ def _wait(client: TestClient, run_id: str, expected: set[str]) -> dict:
     pytest.fail(f"Run never reached {expected}: {data}")
 
 
+@pytest.mark.parametrize("endpoint", ["/api/validate", "/api/runs"])
+@pytest.mark.parametrize("changes", [
+    {"ph_mode": "range", "ph_start": "-0.1", "ph_stop": "1", "ph_step": "0.2"},
+    {"ph_mode": "range", "ph_start": "13", "ph_stop": "14.1", "ph_step": "0.2"},
+    {"ph_mode": "range", "ph_start": "0", "ph_stop": "14", "ph_step": "0"},
+    {"ph_values": "-0.1, 7"},
+    {"ph_values": "7, 14.1"},
+])
+def test_ph_bounds_and_positive_step_are_enforced_before_queueing(
+    client: TestClient, endpoint: str, changes: dict,
+) -> None:
+    response = _submit(client, endpoint=endpoint, **changes)
+    assert response.status_code == 422, response.text
+    assert client.get("/api/runs").json() == []
+
+
+@pytest.mark.parametrize("start,stop,step,expected", [
+    ("0", "14", "7", ["0", "7", "14"]),
+    ("0.2", "1.2", "0.2", ["0.2", "0.4", "0.6", "0.8", "1.0", "1.2"]),
+])
+def test_ph_bounds_are_inclusive_and_typed_fine_steps_remain_valid(
+    client: TestClient, start: str, stop: str, step: str, expected: list[str],
+) -> None:
+    response = _submit(
+        client, endpoint="/api/validate", ph_mode="range", ph_start=start,
+        ph_stop=stop, ph_step=step,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["ph_values"] == expected
+    assert client.get("/api/runs").json() == []
+
+
 @pytest.mark.parametrize("operation", ["compose", "render"])
 def test_history_editor_validates_a_stage_plan_and_queues_an_immutable_derivative(
     client: TestClient,
@@ -465,11 +497,33 @@ def test_gui_loads_the_progress_controller_before_the_page_script(client: TestCl
     assert page.index("/static/run-selection.js") < page.index("/static/app.js")
     assert page.index("/static/protein-selection.js") < page.index("/static/app.js")
     assert page.index("/static/template-settings.js") < page.index("/static/app.js")
+    assert page.index("/static/preferences.js") < page.index("/static/app.js")
     assert client.get("/static/run-selection.js").status_code == 200
     assert client.get("/static/protein-selection.js").status_code == 200
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/static/template-settings.js").status_code == 200
+    assert client.get("/static/preferences.js").status_code == 200
     assert 'id="use-template"' in page
+
+
+def test_global_defaults_do_not_rewrite_existing_runs_or_history_editors(
+    client: TestClient,
+) -> None:
+    run_id = _submit(client).json()["run_id"]
+    completed = _wait(client, run_id, {"completed", "failed"})
+    assert completed["status"] == "completed"
+    manifest_url = f"/api/runs/{run_id}/files/manifest.json"
+    before = client.get(manifest_url).content
+    saved = client.put("/api/preferences", headers=_token(client), json={
+        "defaults": {"workers": 4, "size": 1200, "force_field": "AMBER", "font_size": 40},
+    })
+    assert saved.status_code == 200, saved.text
+    assert client.get(manifest_url).content == before
+    for suffix in ("template?edit=true", "editor?operation=render", "editor?operation=compose"):
+        settings = client.get(f"/api/runs/{run_id}/{suffix}").json()["settings"]
+        assert settings["size"] == 64
+        assert settings["force_field"] == "PARSE"
+        assert settings["font_size"] == 22
 
 
 def test_history_template_restores_inputs_settings_and_creates_a_separate_full_run(
@@ -635,9 +689,11 @@ def test_non_aligned_range_survives_a_completed_gui_run(client: TestClient) -> N
     assert (settings["ph_start"], settings["ph_stop"], settings["ph_step"]) == ("3", "8", "2")
 
 
+@pytest.mark.parametrize("edit", [False, True])
 def test_cancelled_queued_job_can_restore_and_rerun_its_prepared_setup(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
+    edit: bool,
 ) -> None:
     entered, release = threading.Event(), threading.Event()
     execute = JobManager._execute
@@ -683,7 +739,8 @@ def test_cancelled_queued_job_can_restore_and_rerun_its_prepared_setup(
         assert cancelled.json()["status"] == "cancelled"
         assert cancelled.json()["can_template"] is True
         assert not Path(cancelled.json()["directory"]).exists()
-        template = client.get(f"/api/runs/{source_id}/template")
+        original_snapshot = client.app.state.jobs.load_template(source_id).input_root
+        template = client.get(f"/api/runs/{source_id}/template", params={"edit": edit})
         assert template.status_code == 200, template.text
         settings = template.json()["settings"]
         assert settings["force_field"] == "AMBER" and settings["font_size"] == 34
@@ -695,6 +752,8 @@ def test_cancelled_queued_job_can_restore_and_rerun_its_prepared_setup(
             data={"settings": json.dumps(settings)},
         )
         assert rerun.status_code == 202, rerun.text
+        assert (rerun.json()["run_id"] == source_id) is edit
+        assert original_snapshot.exists() is not edit
         monkeypatch.setattr(JobManager, "_execute", execute)
         release.set()
         result = _wait(client, rerun.json()["run_id"], {"completed", "failed"})

@@ -17,6 +17,7 @@ from phmap.errors import ConfigurationError
 from phmap.inputs import validate_run_inputs
 from phmap.manifest import sha256_file
 from phmap.models import PyMOLView
+from phmap.run_updates import RunUpdate
 from phmap.saved_runs import SavedRun
 from phmap.workflow import LocalWorkflow, WorkflowOptions
 
@@ -495,3 +496,16 @@ def test_interrupted_saved_render_finalizes_all_unfinished_cells(
     assert all(task["status"] == "cancelled" for task in data["tasks"])
     assert all("current_stage" not in task for task in data["tasks"])
     assert sha256_file(saved.root / "manifest.json") == saved.digest
+
+
+def test_cli_recovers_a_missing_source_before_loading_its_manifest(saved: SavedRun) -> None:
+    update = RunUpdate(saved.root)
+    update.begin(saved.digest)
+    saved.root.rename(update.previous)
+    update.lock.release()  # Simulate a process exit between the commit renames.
+    assert not saved.root.exists()
+    assert main(["compose", str(saved.root), "--in-place", "--font-size", "30"]) == 0
+    recovered = SavedRun(saved.root)
+    assert recovered.options.font_size == 30
+    assert recovered.manifest["created_at"] == saved.manifest["created_at"]
+    assert not update.folder.exists()

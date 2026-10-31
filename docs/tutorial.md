@@ -9,14 +9,73 @@ application and command-line interface use the same local workflow.
    [Downloads](downloads.md).
 2. Start **pHmap**. The first launch downloads and installs the scientific
    environment; allow a few minutes and keep the computer online.
-3. Add local `.pdb`, `.cif`, or `.mmcif` files, or enter a PDB code such as
+3. Save your standard settings in the optional welcome dialog, or choose
+   **Skip — use defaults**. You can change them later from the sidebar.
+4. In **Proteins**, add local `.pdb`, `.cif`, or `.mmcif` files, or enter a PDB code such as
    `3SQR` and click **Add PDB entry**. Add variant files to the same comparison.
-4. Choose a pH range with start `3`, stop `8`, and step `1`.
-5. Validate the inputs, then start the calculation. The app shows progress and
+5. Click **Next: pH**, then choose a range with start `3`, stop `8`, and step `1`.
+6. Open **Review**. Your standard settings are ready; change optional overrides
+   only when this calculation needs them. Validate or start the calculation.
+   The app shows progress and
    provides the final image and run files when it completes.
 
 Use [release troubleshooting](releases.md#troubleshooting) if first-run setup
 fails, especially on a managed company network.
+
+The **From**, **To**, and **Step** arrow buttons (and keyboard Up/Down arrows)
+use increments of 0.5. You can still type finer values, such as a step of `0.2`.
+The pH limits are **0–14**, inclusive; the calculation step must be positive.
+
+The compact header keeps the setup and results close to the top of the window.
+Click the tool-status line beside **Surface maps** to see individual checks or
+choose **Check again**. Missing tools expand these details automatically.
+The charge-color key appears beside a finished figure and follows that
+calculation's saved colors, not unsubmitted changes in the editor.
+
+## Configure standard settings once
+
+Open **Standard settings** in the sidebar to choose the defaults for new GUI
+calculations. The welcome dialog shows the common choices first: parallel cells,
+tile size, DPI, and background. **More standard settings** includes the force
+field, potential colors/limit, ray tracing, surface and ligand display, and
+publication styling. Saving is explicit; **Skip — use defaults** remembers that
+you dismissed initial setup. Closing the initial dialog or pressing Escape
+also skips setup. If preferences cannot be written, skipping still lets you
+continue; pHmap explains that it cannot remember the dismissal.
+
+After setup, the wizard asks only for calculation-specific choices:
+
+1. **Proteins:** structures, labels/order, an optional name, and optional camera
+   or shared ligand files.
+2. **pH:** the range or ordered explicit values for this comparison.
+3. **Review:** a concise settings summary, optional overrides, validation, and run.
+
+Advanced controls remain available under **Override settings for this
+calculation**. They affect only the current calculation. **Use my saved defaults**
+restores standard settings for a full calculation without changing proteins or
+pH values. It is disabled for artifact-only editing, where changing scientific
+or render settings could invalidate reuse.
+
+Saving global defaults does not overwrite the open calculation or its form.
+Click **New calculation** to use the new defaults, or explicitly apply them to
+a full calculation. History editors and duplicates load the source's own
+settings, not whatever defaults you have chosen since then. Every submitted run
+still records the actual settings it used. No protein paths, uploads, cameras,
+ligands, pH selections, or executable commands are stored as global defaults.
+
+Preferences are stored locally in `preferences.json`, outside individual runs
+and versioned scientific environments:
+
+- macOS: `~/Library/Application Support/pHmap/preferences.json`
+- Windows: `%LOCALAPPDATA%\pHmap\preferences.json`
+- Linux: `$XDG_DATA_HOME/phmap/preferences.json`, or
+  `~/.local/share/phmap/preferences.json` when unset.
+
+`PHMAP_PREFERENCES_PATH` can select a different preferences file. **Reset defaults**
+requires confirmation and restores built-in values without changing saved
+calculations. Invalid or newer-format files produce a warning and are not
+silently overwritten; built-in defaults remain usable. These are GUI defaults:
+the CLI keeps its explicit settings and existing defaults for reproducibility.
 
 ## With the command line
 
@@ -62,6 +121,8 @@ a time. Protein rows and pH columns keep their requested order regardless of
 which cell finishes first.
 
 The GUI starts with up to **2** workers, limited by available logical CPUs.
+Save a different worker count in **Standard settings**, or override **Parallel
+cells** for one calculation in **Review**.
 Start there, or use **1** for large proteins or limited memory: every concurrent
 APBS process needs its own memory. More workers are not always faster. The
 requested count accepts 1–32; execution also caps it at the available CPU count
@@ -93,6 +154,16 @@ calculation unchanged.
 
 ## Reuse a calculation from history
 
+The **Actions** toolbar sits directly below the selected calculation's title.
+**Edit calculation** is the main action; **Re-render** and **Edit figure** refine
+the current result. **Duplicate calculation** is separated because it creates
+a new history entry. The toolbar stays in view while scrolling long results on
+desktop and wraps naturally on smaller screens.
+
+Hover over an action or focus it with the keyboard to see what it reuses and
+updates. Press Escape to dismiss the tooltip. Actions remain visible but
+disabled while a calculation is running, with an explanation in the tooltip.
+
 1. Select a finished calculation in **Run history**.
 2. Click **Edit calculation**. This loads the setup without starting any tools.
 3. Adjust pH values, labels/order, rendering, or publication styling. You can
@@ -120,6 +191,9 @@ jobs without a saved setup have a disabled action with an explanation. Missing
 or modified saved files produce a clear error; the app never silently substitutes
 a different structure or replays executable arguments from a saved job. Runs
 outside the GUI's current size/count limits cannot be loaded as templates.
+**Edit calculation** also resumes a cancelled unstarted job under its existing
+history ID, even though it does not have a scientific manifest yet. **Duplicate
+calculation** still creates a separate ID.
 
 **New calculation** clears the form and cancels pending setup/PDB requests;
 late responses cannot repopulate the new setup.
@@ -156,6 +230,9 @@ last good figure remains available. A failed or cancelled attempt cannot
 replace it. Successful updates discard the previous state; there is no undo
 or automatic version history. A per-calculation lock rejects simultaneous edits,
 and a small on-disk journal recovers interrupted installation on restart.
+Startup also discovers interrupted CLI-only updates without GUI queue records.
+A non-plan CLI compose/render command recovers its source before loading the
+manifest. `--plan` remains read-only and does not perform recovery.
 
 Equivalent CLI examples (replace `runs/SOURCE_RUN` with your run folder):
 

@@ -29,7 +29,7 @@ function harness() {
         : { run_id: state.updateInPlace ? state.templateSource : "new-run" };
     },
     window: { confirm: (text) => { confirmations.push(text); return accept; } },
-    refreshHistory() {}, selectRun() {}, syncSavedInputs() {},
+    refreshHistory() {}, selectRun() {}, syncSavedInputs() {}, watchEditingRun() {}, renderSettingsSummary() {},
   };
   const methods = runInNewContext(`${functions}\n({ requiredToolsReady, syncOperation, send, reconcileEditingSession, artifactUrl, updateButtons });`, state);
   return { state, methods, controls, requests, confirmations, messages, payload,

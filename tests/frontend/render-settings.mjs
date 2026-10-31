@@ -3,6 +3,9 @@ import { readFile } from "node:fs/promises";
 import { Script, runInNewContext } from "node:vm";
 
 const source = await readFile(new URL("../../src/phmap/gui/static/app.js", import.meta.url), "utf8");
+const preferencesSource = await readFile(new URL("../../src/phmap/gui/static/preferences.js", import.meta.url), "utf8");
+const readDefaultSettings = runInNewContext(`${preferencesSource}\nreadDefaultSettings;`);
+const applyDefaultSettings = runInNewContext(`${preferencesSource}\napplyDefaultSettings;`);
 new Script(source); // Also catch syntax errors in the complete page script.
 const template = await readFile(new URL("../../src/phmap/gui/templates/index.html", import.meta.url), "utf8");
 const formFunction = source.match(/function formData\(\) \{[\s\S]*?\n\}/)?.[0];
@@ -26,6 +29,7 @@ class FormDataFixture extends Map {
   append(key, value) { this.set(key, value); }
 }
 const serialize = runInNewContext(`(${formFunction})`, {
+  readDefaultSettings,
   $: (id) => { assert.ok(controls[id], `Unknown form control: ${id}`); return controls[id]; },
   phMode: () => "range",
   proteinSelection: { inputs: () => ({ labels: ["WT"], structures: [{ pdb_id: "3SQR" }], uploads: [] }) },
@@ -93,4 +97,12 @@ for (const [id, values] of Object.entries({
 }
 assert.match(template, /id="surface-ramp-above-mode"[^>]*checked/);
 assert.doesNotMatch(template, /id="surface-solvent"[^>]*checked/);
+const savedDefaults = { ...settings(), workers: 4, size: 1200, dpi: 450, font_size: 32, foreground: "auto", background: "black" };
+applyDefaultSettings(savedDefaults, (id) => controls[id]);
+assert.equal(settings().workers, 4);
+assert.equal(settings().size, 1200);
+assert.equal(settings().font_size, 32);
+assert.equal(settings().foreground, "white");
+assert.equal(settings().ph_start, "3", "Global settings must not overwrite the per-run pH selection.");
+assert.equal(settings().structures[0].pdb_id, "3SQR");
 console.log("Render-settings checks passed (all modes, representations, and boolean combinations)");

@@ -226,6 +226,48 @@ client; no Node build or CDN is required. The client submits multipart uploads
 and validated settings, then receives manifest snapshots through Server-Sent
 Events. GUI and CLI use the same validation models and scientific workflow.
 
+HTML, CSS and script URLs share a content-derived revision, including during
+unreleased source edits. HTML/API/static responses use `Cache-Control: no-store`
+so an updated template does not reuse pre-wizard scripts or styles at unchanged
+URLs. The revision covers the template and all static files, not just the Python
+release version. A small first-loaded startup guard shows a reload/restart
+message when scripts fail to initialize or current styles are missing, instead
+of leaving apparently live buttons without handlers. Native reload links remain
+usable without the main script. Restart the server after changing Python code;
+refreshing cannot reload an already-running Python process.
+
+`gui.preferences.PreferencesStore` stores an explicit allowlist of reusable
+settings in one per-user, schema-versioned JSON file. `phmap.paths` shares the
+stable application-data directory with the desktop launcher. Atomic replacement
+and a cross-process lock protect saves across GUI workspaces. Invalid or future
+schemas fall back visibly without being overwritten except after explicit reset.
+`PHMAP_PREFERENCES_PATH` overrides the location; tests isolate it automatically.
+The same request models and core options validate preferences, excluding input
+files, pH selections, session identity, and executable paths. Automatic foreground
+contrast is a GUI preference resolved into a concrete color at submission.
+
+The first-launch dialog is optional and remembers save/skip. The three-step
+wizard separates per-calculation structures/pH from reusable rendering defaults.
+`static/preferences.js` shares control serialization between the per-run and
+global editors; the global editor clones only override controls, never files or
+session fields. New forms use global defaults, while history editors restore
+their own complete settings. Saving defaults does not rewrite an existing form
+or run. The CLI does not implicitly load GUI preferences.
+
+An independent progress controller follows the editing calculation while the
+selected history stream can browse another result. Cancelled unstarted GUI jobs
+use a pinned submission digest and a fresh private input snapshot to resume
+under the same ID, without requiring a nonexistent scientific manifest.
+Resuming retires the previous snapshot only after the replacement queue record
+is durably saved. Cleanup checks ownership, hashes, provenance and camera bytes;
+additional user files, changed inputs and symbolic links are left untouched.
+Small cleanup tickets survive temporary deletion failures and are retried on
+restart. Failed staging retains the old setup and removes unpublished copies.
+Startup discovers owned orphan transaction journals as well as GUI records;
+non-plan CLI artifact operations recover before attempting to load a missing
+source. Active writer locks prevent recovery from discarding another process's
+pending work. No recovery runs for a CLI `--plan` request.
+
 Core execution and presentation settings live in `phmap.configuration`; both
 interfaces validate them before creating a run or launching scientific tools.
 Browser request models live in `phmap.gui.schemas`, separate from HTTP handlers.
@@ -264,7 +306,32 @@ node tests/frontend/render-settings.mjs
 node tests/frontend/template-settings.mjs
 node tests/frontend/saved-runs.mjs
 node tests/frontend/request-races.mjs
+node tests/frontend/preferences.mjs
 ```
+
+For full-page DOM/API regression tests, install the development-only JavaScript
+dependencies with a supported Node.js version (CI uses Node 26):
+
+```console
+npm ci --ignore-scripts --no-audit --no-fund
+pixi run --locked test tests/test_ui_assets.py tests/test_ui_integration.py
+```
+
+These checks load the actual rendered template, styles and complete scripts in
+their real order. Button clicks make requests to the actual FastAPI application
+and queue, with offline scientific-tool and RCSB fixtures. They cover initial
+setup save/skip/close/Escape, preferences/reset, wizard navigation, PDB fetching,
+uploads/drop/reordering/removal, camera/ligand reuse, validation, calculation,
+figure edits, re-rendering, duplication, queued/active cancellation, setup resume,
+history, logs, downloads, startup failure, stale scripts, missing styles and
+outdated-server recovery.
+Native dialog presentation, file selection, scrolling and EventSource transport
+are simulated; these are not screenshot or real-browser layout tests. Pixel,
+keyboard/focus, native file-dialog and browser-engine checks still need an actual
+browser. The full-page tests run in desktop CI on every platform; local Python-only
+development can omit them when Node/development packages are unavailable.
+The npm packages are not required to build or run pHmap and are not bundled in
+desktop releases. No production frontend build or CDN dependency was introduced.
 
 History reads lightweight summaries, while detailed run views discover images
 and logs only when requested. Desktop environment installation and activation

@@ -377,6 +377,10 @@ def _run(args: argparse.Namespace) -> int:
 def _saved_run(args: argparse.Namespace) -> int:
     if args.in_place and (args.output_dir is not None or "runs_dir" in vars(args)):
         raise InputValidationError("--in-place cannot be combined with an output destination")
+    if not args.plan:
+        from phmap.run_updates import recover_run_update
+
+        recover_run_update(args.source, skip_busy=True)
     source = SavedRun(args.source, expected_manifest=args.source_manifest_sha256)
     if args.view is not None and args.auto_view:
         raise InputValidationError("Choose --view or --auto-view, not both")

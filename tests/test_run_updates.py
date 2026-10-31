@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from phmap.errors import ConfigurationError
+from phmap.gui.jobs import JobManager
 from phmap.json_state import read_json, write_json
 from phmap.manifest import sha256_file
 from phmap.run_updates import RunUpdate
@@ -198,3 +199,28 @@ def test_update_refuses_to_remove_unrelated_files_from_a_calculation(tmp_path: P
         update.begin(sha256_file(update.target / "manifest.json"))
     assert notes.read_text() == "keep my notes"
     assert (update.target / "output/pHmap.png").read_bytes() == b"last good figure"
+
+
+def test_gui_start_recovers_cli_only_transactions_without_queue_records(tmp_path: Path) -> None:
+    update = _update(tmp_path)
+    update.target.rename(update.previous)
+    update.lock.release()
+    manager = JobManager(update.target.parent)
+    try:
+        manager.start()
+        assert (update.target / "output/pHmap.png").read_bytes() == b"last good figure"
+        assert not update.folder.exists()
+        assert manager.history()[0]["run_id"] == "session"
+    finally:
+        manager.close()
+
+
+def test_gui_recovery_does_not_discard_an_active_cli_update(tmp_path: Path) -> None:
+    update = _update(tmp_path)
+    manager = JobManager(update.target.parent)
+    try:
+        manager.start()
+        assert update.pending.exists() and update.marker.exists()
+    finally:
+        manager.close()
+        update.discard()

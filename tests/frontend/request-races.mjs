@@ -35,7 +35,8 @@ function harness() {
     api: (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject })),
     message: (text) => messages.push(text), applyTemplate: (value) => applied.push(value),
     renderProteins() {}, updateButtons() {}, syncSavedInputs() {}, syncPhMode() {}, syncOperation() {},
-    selection: { close() {} }, refreshHistory() {},
+    selection: { close() {} }, editingSelection: { close() {} }, refreshHistory() {},
+    applySavedDefaults() {}, setWizardStep() {},
   };
   const methods = runInNewContext(`${functions}\nfunction newCalculation() {${resetBody}\n}\n`
     + `function finishEditing() {${finishBody}\n}\n`

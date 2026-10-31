@@ -114,6 +114,16 @@ ligand files and figure settings are available in the setup form. Validate the
 selection or start a calculation; the interface shows live stage progress,
 individual surfaces, logs, and the final PNG download.
 
+On first launch, a small optional setup dialog lets you save standard settings
+or **Skip — use defaults**. **Standard settings** in the sidebar remains available
+later. Rendering, publication styling, force field, and parallel workers are
+saved once per user, across workspaces and app versions. The calculation wizard
+then focuses on **Proteins**, **pH**, and **Review**. Advanced controls live under
+**Override settings for this calculation**; changing them does not alter your
+saved defaults. History editors restore the calculation's own settings instead
+of silently applying current global defaults. CLI arguments/defaults remain
+explicit and unchanged. See [standard settings](docs/tutorial.md#configure-standard-settings-once).
+
 The GUI queues one calculation at a time and can cancel queued or active runs.
 Within a calculation, **Parallel cells** runs independent protein/pH cells
 concurrently, including re-rendering. It defaults to up to two workers; reduce

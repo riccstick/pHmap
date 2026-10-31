@@ -36,6 +36,12 @@ launcher and native GitHub Actions build matrix are implemented. Configuring
 the matrix does not establish that every platform has passed; public signing
 and notarization remain separate release work.
 
+The GUI also has per-user standard settings, optional first-launch setup with
+persistent skip, and a three-step **Proteins / pH / Review** wizard. Rendering,
+publication, force-field and worker defaults are reused across new calculations;
+per-run overrides and saved-session settings stay separate. CLI settings remain
+explicit. See [standard settings](tutorial.md#configure-standard-settings-once).
+
 ## Parallel calculation and rendering
 
 Implemented in both interfaces: **Parallel cells** / `--workers` bounds concurrent

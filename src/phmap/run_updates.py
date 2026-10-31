@@ -176,6 +176,37 @@ class RunUpdate:
             self.cleanup_error = str(exc)  # Installed successfully; finish cleanup on recovery.
 
 
+def recover_run_update(target: Path, *, skip_busy: bool = False) -> None:
+    """Restore a journaled calculation before a caller needs its manifest."""
+    update = RunUpdate(target.expanduser().resolve())
+    if not update.folder.exists():
+        return
+    if update.folder.parent.is_symlink() or (update.folder.parent / ".locks").is_symlink():
+        raise ConfigurationError("Update storage must not use symbolic links")
+    try:
+        update.lock.acquire()
+    except ConfigurationError:
+        if skip_busy:
+            return
+        raise
+    try:
+        update.recover()
+    finally:
+        update.lock.release()
+
+
+def recover_run_updates(runs_dir: Path) -> None:
+    """Discover owned journals, including CLI-only runs absent from GUI records."""
+    folder = runs_dir / ".phmap-updates"
+    if not folder.is_dir() or folder.is_symlink():
+        return
+    for entry in folder.iterdir():
+        if entry.name.startswith(".") or entry.is_symlink() or not entry.is_dir():
+            continue
+        if read_json(entry / "transaction.json").get("owner") == "phmap-run-update-1":
+            recover_run_update(runs_dir / entry.name, skip_busy=True)
+
+
 def relocate_manifest(data: dict[str, Any], old_root: Path, new_root: Path) -> None:
     """Relocate artifact pointers, while preserving the exact executed argv."""
     for records, key in (

@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from collections import deque
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -22,11 +22,12 @@ from phmap.locking import LocalLock
 from phmap.manifest import finish_task_state, sha256_file, utc_now
 from phmap.models import RunInputs, structure_suffix
 from phmap.processes import hidden_process_options, terminate_tree
-from phmap.run_updates import RunUpdate, preserve_artifacts
+from phmap.run_updates import RunUpdate, preserve_artifacts, recover_run_updates
 from phmap.saved_runs import SavedRun, SavedRunWorkflow
 from phmap.structures import copy_structure_source, structure_source
 from phmap.workspace import default_run_id
 
+from .input_snapshots import remove_input_snapshot, retire_input_snapshot, stage_input_snapshot
 from .run_templates import RunTemplate
 
 TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
@@ -141,6 +142,11 @@ class JobManager:
         self.uploads.mkdir(parents=True, exist_ok=True)
         self.records.mkdir(parents=True, exist_ok=True)
         self._lock.acquire()
+        try:
+            recover_run_updates(self.runs_dir)
+        except BaseException:
+            self._lock.release()
+            raise
         for path in self.records.glob("*.json"):
             record = read_json(path)
             if not record or not _RUN_ID.fullmatch(path.stem):
@@ -174,12 +180,45 @@ class JobManager:
                 if not record.get("update_in_place"):
                     self._mark_manifest(path.stem, "interrupted", record["error"])
             self._jobs[path.stem] = record
+        for run_id in self._jobs:
+            self._cleanup_retired_inputs(run_id)
         self._thread = threading.Thread(target=self._work, name="phmap-jobs", daemon=True)
         self._thread.start()
 
     def _save(self, run_id: str) -> None:
         self._jobs[run_id]["updated_at"] = utc_now()
         write_json(self.records / f"{run_id}.json", self._jobs[run_id])
+
+    def _cleanup_retired_inputs(self, run_id: str) -> None:
+        """The replacement record is durable before any previous inputs are removed."""
+        record = self._jobs[run_id]
+        retired = record.get("retired_input_snapshots", [])
+        if not retired:
+            return
+        remaining = []
+        errors = []
+        for snapshot in retired:
+            try:
+                folder = snapshot["input_folder"]
+                if any(job.get("input_folder", key) == folder for key, job in self._jobs.items()):
+                    raise ConfigurationError("Input snapshot is still referenced; left untouched")
+                remove_input_snapshot(self.uploads, run_id, snapshot)
+            except (
+                OSError, ConfigurationError, ValueError, TypeError, KeyError, AttributeError,
+            ) as exc:
+                remaining.append(snapshot)
+                errors.append(str(exc))
+        if remaining:
+            record["retired_input_snapshots"] = remaining
+            record["input_cleanup_error"] = "; ".join(errors)
+        else:
+            record.pop("retired_input_snapshots", None)
+            record.pop("input_cleanup_error", None)
+        try:
+            self._save(run_id)
+        except OSError as exc:
+            # The original durable tickets permit another attempt after restart.
+            record["input_cleanup_error"] = str(exc)
 
     def submit(
         self,
@@ -192,9 +231,30 @@ class JobManager:
         expected_manifest: str | None = None,
     ) -> str:
         with self._condition:
-            update = self._begin_update(update_run_id, expected_manifest)
+            resume = None
+            if update_run_id is not None and not self.run_directory(update_run_id).exists():
+                record = self._jobs.get(update_run_id, {})
+                if (
+                    record.get("status") not in TERMINAL
+                    or not record.get("inputs")
+                    or expected_manifest is None
+                    or sha256_file(self.records / f"{update_run_id}.json") != expected_manifest
+                ):
+                    raise ConfigurationError("Saved setup changed; reload it before resuming")
+                resume = update_run_id
+            update = self._begin_update(update_run_id, expected_manifest) if not resume else None
             try:
-                return self._submit(inputs, options, name=name, based_on=based_on, update=update)
+                staging = (
+                    stage_input_snapshot(
+                        self.uploads, resume, f"{resume}-resume-{default_run_id()}",
+                        self.records / f"{resume}.json", expected_manifest or "",
+                    ) if resume else nullcontext(None)
+                )
+                with staging as destination:
+                    return self._submit(
+                        inputs, options, name=name, based_on=based_on, update=update,
+                        resume_run_id=resume, resume_input_folder=destination,
+                    )
             except BaseException:
                 self._discard_update(update_run_id)
                 raise
@@ -237,15 +297,20 @@ class JobManager:
         name: str,
         based_on: dict[str, str] | None,
         update: RunUpdate | None,
+        resume_run_id: str | None = None,
+        resume_input_folder: Path | None = None,
     ) -> str:
         with self._condition:
             if self._closing or self._thread is None:
                 raise ConfigurationError("The calculation queue is unavailable")
             if len(self._queue) >= 20:
                 raise ConfigurationError("The queue is full; wait for a run to finish")
-            run_id = update.target.name if update else default_run_id()
-            destination = update.folder / "uploads" if update else self.uploads / run_id
-            destination.mkdir()
+            run_id = resume_run_id or (update.target.name if update else default_run_id())
+            destination = resume_input_folder or (
+                update.folder / "uploads" if update else self.uploads / run_id
+            )
+            if resume_input_folder is None:
+                destination.mkdir()
             proteins = []
             for protein in inputs.proteins:
                 pdb = destination / f"{protein.protein_id}{structure_suffix(protein.path)}"
@@ -293,6 +358,10 @@ class JobManager:
                                 **({"source": source} if source else {}),
                             }
                         )
+            previous = self._jobs.get(run_id)
+            retired = list(previous.get("retired_input_snapshots", [])) if previous else []
+            if resume_run_id and previous:
+                retired.append(retire_input_snapshot(run_id, previous))
             self._jobs[run_id] = {
                 "run_id": run_id,
                 "name": name.strip()[:120]
@@ -301,22 +370,33 @@ class JobManager:
                 "created_at": (
                     (
                         self._jobs.get(run_id, {}).get("created_at")
-                        or read_json(update.target / "manifest.json")["created_at"]
+                        or (read_json(update.target / "manifest.json")["created_at"]
+                            if update else utc_now())
                     )
-                    if update
+                    if update or resume_run_id
                     else utc_now()
                 ),
                 "argv": argv,
                 **({"based_on": based_on} if based_on else {}),
                 "configuration": build_run_configuration(staged, options),
                 "inputs": saved_inputs,
+                "input_folder": destination.name,
+                **({"retired_input_snapshots": retired} if retired else {}),
                 "update_in_place": update is not None,
                 "source_manifest_sha256": update.source_digest if update else None,
                 **({"previous_name": self._jobs.get(run_id, {}).get("name")} if update else {}),
             }
-            self._save(run_id)
+            try:
+                self._save(run_id)
+            except BaseException:
+                if previous is not None:
+                    self._jobs[run_id] = previous
+                else:
+                    self._jobs.pop(run_id, None)
+                raise
             self._queue.append(run_id)
             self._condition.notify()
+            self._cleanup_retired_inputs(run_id)
             return run_id
 
     def submit_saved(
@@ -381,6 +461,7 @@ class JobManager:
                 view = destination / "view.txt"
                 view.write_text(", ".join(repr(value) for value in workflow.view), encoding="utf-8")
                 argv.extend(("--view", str(view)))
+            previous = self._jobs.get(run_id, {})
             self._jobs[run_id] = {
                 "run_id": run_id,
                 "name": name.strip()[:120] or f"{workflow.operation} · {workflow.source.root.name}",
@@ -397,6 +478,8 @@ class JobManager:
                 "plan": workflow.plan(),
                 "update_in_place": update is not None,
                 "source_manifest_sha256": update.source_digest if update else None,
+                **({"retired_input_snapshots": previous["retired_input_snapshots"]}
+                   if previous.get("retired_input_snapshots") else {}),
                 **({"previous_name": self._jobs.get(run_id, {}).get("name")} if update else {}),
                 "configuration": {
                     "proteins": [{"id": key, "label": label} for key, label in workflow.proteins],
@@ -406,6 +489,7 @@ class JobManager:
             self._save(run_id)
             self._queue.append(run_id)
             self._condition.notify()
+            self._cleanup_retired_inputs(run_id)
             return run_id
 
     def _work(self) -> None:
@@ -587,14 +671,20 @@ class JobManager:
         return self.load_template(run_id).response(name=name)
 
     def load_template(self, run_id: str) -> RunTemplate:
-        root, _, _ = self._read_state(run_id)
+        root, record, _ = self._read_state(run_id)
         manifest = root / "manifest.json"
         if manifest.exists() or manifest.is_symlink():
             return RunTemplate(root)
+        folder = record.get("input_folder", run_id)
+        if not isinstance(folder, str) or not _RUN_ID.fullmatch(folder):
+            raise ConfigurationError("Saved input folder is invalid")
+        input_root = (self.uploads / folder).resolve()
+        if input_root.parent != self.uploads:
+            raise ConfigurationError("Saved input folder is outside GUI storage")
         return RunTemplate(
             root,
             submission_path=self.records / f"{run_id}.json",
-            input_root=self.uploads / run_id,
+            input_root=input_root,
         )
 
     @staticmethod
@@ -684,6 +774,10 @@ class JobManager:
                 sha256_file(root / "manifest.json")
                 if summary["status"] in TERMINAL and (root / "manifest.json").is_file()
                 else None
+            ),
+            "submission_sha256": (
+                sha256_file(self.records / f"{run_id}.json")
+                if summary["status"] in TERMINAL and record and not manifest else None
             ),
             "update_in_place": bool(record.get("update_in_place")),
         }

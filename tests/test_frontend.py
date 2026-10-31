@@ -8,7 +8,7 @@ import pytest
 
 @pytest.mark.parametrize("script", [
     "run-selection.mjs", "protein-selection.mjs", "render-settings.mjs", "template-settings.mjs",
-    "request-races.mjs", "saved-runs.mjs",
+    "request-races.mjs", "saved-runs.mjs", "preferences.mjs",
 ])
 def test_frontend_controllers(script: str) -> None:
     node = shutil.which("node")

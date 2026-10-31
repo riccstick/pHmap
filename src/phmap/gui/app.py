@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import secrets
@@ -47,11 +48,23 @@ from phmap.structure_formats import validate_mmcif
 from phmap.structures import fetch_structure, normalize_pdb_id, structure_source
 
 from .jobs import TERMINAL, JobManager
+from .preferences import PreferencesRequest, PreferencesStore
 from .schemas import FetchSettings
 from .schemas import RunSettings as RunSettings
 
 _ASSETS = Path(__file__).parent
 _MAX_UPLOAD = 64 * 1024 * 1024
+
+
+def _asset_version() -> str:
+    """Change every UI asset URL when markup, styles, or scripts change."""
+    digest = hashlib.sha256()
+    for path in sorted((_ASSETS / "static").rglob("*")):
+        if path.is_file():
+            digest.update(path.relative_to(_ASSETS).as_posix().encode())
+            digest.update(path.read_bytes())
+    digest.update((_ASSETS / "templates/index.html").read_bytes())
+    return digest.hexdigest()[:16]
 
 
 def _summary(inputs: RunInputs) -> dict[str, Any]:
@@ -101,10 +114,12 @@ def create_app(
     *,
     manager: JobManager | None = None,
     desktop_token: str = "",
+    preferences_path: Path | None = None,
 ) -> FastAPI:
     """Construct the application without starting a server or worker on import."""
 
     jobs = manager or JobManager(runs_dir)
+    preferences = PreferencesStore(preferences_path)
     token = secrets.token_urlsafe(32)
     templates = Jinja2Templates(directory=str(_ASSETS / "templates"))
 
@@ -150,7 +165,7 @@ def create_app(
             "default-src 'self'; script-src 'self'; style-src 'self'; "
             "img-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'"
         )
-        if request.url.path.startswith("/api/"):
+        if request.url.path == "/" or request.url.path.startswith(("/api/", "/static/")):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -164,12 +179,39 @@ def create_app(
             context={
                 "token": token,
                 "version": __version__,
+                "asset_version": _asset_version(),
                 "runs_dir": str(jobs.runs_dir),
                 "recommended_workers": recommended_workers(),
                 "available_cpus": available_cpus(),
                 "max_workers": MAX_WORKERS,
+                "preferences": preferences.read(),
             },
         )
+
+    @app.get("/api/preferences")
+    def get_preferences() -> dict[str, Any]:
+        return preferences.read()
+
+    @app.put("/api/preferences")
+    def save_preferences(settings: PreferencesRequest) -> dict[str, Any]:
+        try:
+            return preferences.save(settings.defaults)
+        except (ConfigurationError, ValueError, OSError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/api/preferences/skip")
+    def skip_preferences() -> dict[str, Any]:
+        try:
+            return preferences.save()
+        except (ConfigurationError, OSError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/api/preferences/reset")
+    def reset_preferences() -> dict[str, Any]:
+        try:
+            return preferences.save(reset=True)
+        except (ConfigurationError, OSError) as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @app.get("/api/doctor")
     def doctor() -> dict[str, Any]:
@@ -464,7 +506,9 @@ def create_app(
                 data["settings"].update(
                     name=snapshot["name"],
                     update_in_place=True,
-                    source_manifest_sha256=snapshot["manifest_sha256"],
+                    source_manifest_sha256=(
+                        snapshot["manifest_sha256"] or snapshot["submission_sha256"]
+                    ),
                 )
             return data
         except FileNotFoundError as exc:

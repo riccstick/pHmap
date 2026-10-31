@@ -27,15 +27,8 @@ from typing import Any
 from phmap.desktop_runtime import DesktopRuntime
 from phmap.errors import ConfigurationError
 from phmap.locking import LocalLock
+from phmap.paths import data_directory
 from phmap.processes import hidden_process_options, terminate_tree
-
-
-def data_directory() -> Path:
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "pHmap"
-    if os.name == "nt":
-        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "pHmap"
-    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "phmap"
 
 
 def resources() -> Path:

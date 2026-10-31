@@ -45,6 +45,27 @@ downloads; Windows currently targets x64, not ARM.
 
 ## Troubleshooting
 
+### New buttons look unstyled or do nothing
+
+New wizard or **Standard settings** buttons that look like plain operating-system
+buttons, while older controls and tool checks still work, can indicate mixed UI
+versions: updated HTML with a cached older stylesheet or script.
+
+1. Wait for active calculations to finish before restarting. Quitting pHmap
+   cancels unfinished GUI calculations; saved completed results remain available.
+2. Fully quit the desktop launcher or stop the Terminal-started GUI with Ctrl+C.
+   Reopen the updated app, or run `pixi run --locked gui` from the current checkout.
+3. Reload the browser page. Use the browser's force-reload option once if old
+   styles or controls remain. A downloaded release does not pick up checkout
+   changes; rebuild the desktop app when testing local changes in a packaged app.
+4. If an interface error banner appears, use **Reload interface**. An outdated
+   server message requires restarting pHmap, not only refreshing the page.
+
+Current builds put a content revision on every UI asset URL and disable caching
+of HTML/scripts/styles to prevent this mismatch after updates. They also report
+startup errors instead of silently leaving inactive controls. This affects the
+browser interface, not the saved scientific artifacts or calculation settings.
+
 ### macOS blocks pHmap from an unidentified developer
 
 The current macOS builds are not Developer ID-signed or notarized. Gatekeeper
