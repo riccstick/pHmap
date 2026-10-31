@@ -7,10 +7,59 @@ import pytest
 from phmap.cli import build_parser
 from phmap.configuration import WorkflowOptions
 from phmap.errors import ConfigurationError
-from phmap.gui.jobs import JobManager, build_worker_argv, write_json
+from phmap.gui.jobs import JobManager, build_worker_argv, read_json, write_json
 from phmap.inputs import validate_run_inputs
 from phmap.manifest import sha256_file
 from phmap.run_updates import RunUpdate
+
+
+@pytest.mark.parametrize("status", ["cancelled", "interrupted"])
+def test_cancellation_finalization_preserves_prior_failures_and_completed_work(
+    tmp_path: Path, status: str,
+) -> None:
+    manager = JobManager(tmp_path / "runs")
+    path = manager.runs_dir / "run" / "manifest.json"
+    path.parent.mkdir(parents=True)
+    completed = {
+        "task_id": "completed", "status": "completed",
+        "stages": [{"name": "apbs", "status": "completed", "outputs": ["model.dx"]}],
+    }
+    failed = {
+        "task_id": "failed-before-cancel", "status": "failed", "error": "Real failure",
+        "stages": [{"name": "apbs", "status": "failed", "error": "Real failure"}],
+    }
+    write_json(path, {
+        "status": "running",
+        "tasks": [
+            completed, failed,
+            {"task_id": "failed-during-stop", "status": "failed", "stages": [
+                {"name": "pdb2pqr", "status": "completed", "outputs": ["model.pqr"]},
+                {"name": "apbs", "status": "failed", "returncode": 13,
+                 "stdout": "apbs.stdout.log", "stderr": "apbs.stderr.log"},
+            ]},
+            {"task_id": "running", "status": "running", "current_stage": "apbs",
+             "stages": [{"name": "apbs", "status": "running"}]},
+            {"task_id": "pending", "status": "pending", "stages": []},
+        ],
+    })
+    manager._mark_manifest(
+        "run", status, "Stopped",
+        cancelled_tasks={"completed", "failed-during-stop", "running", "pending"},
+    )
+    data = read_json(path)
+    assert data["status"] == status
+    done, prior_failure, shutdown_failure, active, pending = data["tasks"]
+    assert done == completed
+    assert prior_failure == failed
+    assert shutdown_failure["status"] == ("cancelled" if status == "cancelled" else "failed")
+    first, last = shutdown_failure["stages"]
+    assert first == {"name": "pdb2pqr", "status": "completed", "outputs": ["model.pqr"]}
+    assert last["status"] == shutdown_failure["status"]
+    assert last["returncode"] == 13
+    assert last["stdout"] == "apbs.stdout.log" and last["stderr"] == "apbs.stderr.log"
+    assert active["status"] == pending["status"] == status
+    assert active["stages"][-1]["status"] == status
+    assert "current_stage" not in active
 
 
 @pytest.mark.parametrize("mode", range(5))

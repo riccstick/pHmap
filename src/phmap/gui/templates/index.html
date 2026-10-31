@@ -13,12 +13,15 @@
   <script src="/static/protein-selection.js?v={{ asset_version }}" defer></script>
   <script src="/static/template-settings.js?v={{ asset_version }}" defer></script>
   <script src="/static/preferences.js?v={{ asset_version }}" defer></script>
+  <script src="/static/artifact-editor.js?v={{ asset_version }}" defer></script>
+  <script src="/static/workspace-notice.js?v={{ asset_version }}" defer></script>
+  <script src="/static/dialog-help.js?v={{ asset_version }}" defer></script>
   <script src="/static/app.js?v={{ asset_version }}" defer></script>
 </head>
 <body>
   <aside class="sidebar">
     <a class="brand" href="/" aria-label="pHmap home"><img src="/static/icon.svg?v={{ asset_version }}" alt="">pHmap<span>2</span></a>
-    <p class="brand-caption">PROTEIN ELECTROSTATICS</p>
+    <p class="brand-caption">Surface charge across pH</p>
     <button class="new-run" id="new-run" type="button"><span>+</span> New calculation</button>
     <button class="settings-button button secondary" id="open-preferences" type="button"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor"/><circle cx="15" cy="17" r="3" fill="currentColor"/></svg><span>Standard settings</span></button>
     <div class="sidebar-heading"><span>RUN HISTORY</span><button id="refresh-history" class="icon-button" title="Refresh run history" aria-label="Refresh run history">↻</button></div>
@@ -36,12 +39,19 @@
           <div class="toolchain-body"><div id="toolchain-checks" class="toolchain-checks"></div><button id="recheck-tools" class="text-button" type="button">Check again</button></div>
         </details>
       </header>
+      <div id="workspace-message" class="workspace-notice" hidden>
+        <span class="workspace-notice-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="8"/><path d="M10 9v5m0-9v1"/></svg></span>
+        <div class="workspace-notice-copy" role="status" aria-live="polite" aria-atomic="true"><strong data-notice-title></strong><span data-notice-text></span></div>
+        <button type="button" class="icon-button" data-notice-dismiss aria-label="Dismiss notification">×</button>
+      </div>
 
-      <div class="workspace-grid">
-        <section class="setup-panel card">
-          <div class="card-heading"><h2 id="setup-title">Set up a calculation</h2><span class="step-badge">01 — CONFIGURE</span></div>
+        <dialog id="calculation-dialog" class="setup-panel" aria-labelledby="setup-title" aria-describedby="calculation-intro">
+          <div class="dialog-heading"><h2 id="setup-title">New calculation</h2><button id="close-calculation" type="button" class="icon-button" aria-label="Close calculation setup">×</button></div>
+          <p id="calculation-intro">Choose proteins and pH, then review and calculate.</p>
+          <div id="form-message" role="status" aria-live="polite" hidden></div>
+          <p id="calculation-tools-warning" class="message error" role="status" hidden>Tools not ready. You can configure; check the tool status before starting.</p>
           <form id="run-form" novalidate>
-            <div class="session-notice" id="template-notice" hidden><strong id="template-action">Editing calculation</strong> <code id="template-source"></code><p id="template-behavior"></p><button id="done-editing" type="button" class="button secondary small">Done editing</button></div>
+            <div class="session-notice" id="template-notice" hidden><strong id="template-action">Editing calculation</strong> <code id="template-source"></code><p id="template-behavior"></p></div>
             <p class="field-hint" id="operation-notice" hidden></p>
             <nav class="wizard-nav" aria-label="Calculation steps">
               <button class="wizard-step button secondary" type="button" data-step="1" aria-current="step" aria-controls="wizard-proteins"><span class="wizard-number">1</span><span>Proteins</span></button>
@@ -55,14 +65,14 @@
             <div class="section-heading"><h3>Protein structures</h3><span class="field-hint">up to 32 structures</span></div>
             <label class="field-label" for="pdb-code">Fetch from RCSB PDB</label>
             <div class="pdb-fetch"><input id="pdb-code" type="text" maxlength="20" placeholder="e.g. 3SQR" autocomplete="off" autocapitalize="characters" aria-describedby="pdb-fetch-hint"><button id="fetch-pdb" class="button secondary" type="button">Add PDB entry</button></div>
-            <p class="field-hint" id="pdb-fetch-hint">Downloads PDBx/mmCIF coordinates once and saves them locally. Fetching a new entry requires internet access.</p>
+            <p class="field-hint" id="pdb-fetch-hint" data-help-for="pdb-code">Downloads PDBx/mmCIF coordinates once and saves them locally. Fetching a new entry requires internet access.</p>
             <label class="file-drop" id="file-drop" for="proteins"><span class="upload-icon">↥</span><strong>Add local structures or variants</strong><span>PDB or PDBx/mmCIF · choose files or drop them here</span><input id="proteins" type="file" accept=".pdb,.cif,.mmcif" multiple aria-label="Add local PDB or PDBx mmCIF structures"></label>
             <div id="protein-list" class="protein-list"></div>
-            <p class="field-hint" id="order-hint" hidden>Mix fetched entries and local variants. Each row is one structure; edit labels or change the comparison order below.</p>
+            <p class="field-hint" id="order-hint" hidden>Edit row labels; use arrows to reorder.</p>
 
-            <details class="settings-details"><summary>Camera &amp; ligand <span>optional for this calculation</span></summary><label class="field-label" for="view">PyMOL camera view</label><input id="view" type="file" accept=".txt"><p class="field-hint">An 18-number view exported from PyMOL. Without one, each structure is automatically oriented.</p><label class="field-label" for="ligand">Shared ligand <span class="optional">experimental</span></label><input id="ligand" type="file" accept=".mol2"><p class="field-hint">Applied to every supplied protein.</p></details>
-            <div id="saved-view" class="field-hint" hidden>Saved camera will be reused. Choose a camera file above to replace it, or <button id="clear-saved-view" type="button" class="text-button">remove saved camera</button>.</div>
-            <div id="saved-ligand" class="field-hint" hidden>Saved shared ligand will be reused. Choose a ligand file above to replace it, or <button id="clear-saved-ligand" type="button" class="text-button">remove saved ligand</button>.</div>
+            <details class="settings-details"><summary>Camera &amp; ligand <span>optional</span></summary><label class="field-label" for="view">PyMOL camera view</label><input id="view" type="file" accept=".txt" aria-describedby="view-hint"><p id="view-hint" class="field-hint" data-help-for="view">An 18-number view exported from PyMOL. Without one, each structure is automatically oriented. Upload a file to replace a saved camera.</p><label class="field-label" for="ligand">Shared ligand <span class="optional">experimental</span></label><input id="ligand" type="file" accept=".mol2" aria-describedby="ligand-hint"><p id="ligand-hint" class="field-hint" data-help-for="ligand">One shared MOL2 ligand applies to every supplied protein. Ligand parameterization is experimental. Upload a file to replace a saved ligand.</p></details>
+            <div id="saved-view" class="field-hint" hidden>Saved camera reused. <button id="clear-saved-view" type="button" class="text-button">Remove saved camera</button></div>
+            <div id="saved-ligand" class="field-hint" hidden>Saved shared ligand reused. <button id="clear-saved-ligand" type="button" class="text-button">Remove saved ligand</button></div>
             </section>
 
             <section id="wizard-ph" data-wizard-step="2" aria-label="Choose pH values" hidden>
@@ -82,30 +92,31 @@
                 <div class="ph-number-arrows"><button type="button" data-ph-input="ph-step" data-direction="1" aria-label="Increase pH step by 0.5">▴</button><button type="button" data-ph-input="ph-step" data-direction="-1" aria-label="Decrease pH step by 0.5">▾</button></div>
               </div></div>
             </div>
-            <p id="ph-range-hint" class="field-hint">pH must be between 0 and 14. Arrows use 0.5 increments; type a finer value such as 0.2 if needed. Step must be greater than zero.</p>
-            <div id="explicit-fields" hidden><label class="field-label" for="ph-values">pH values, in column order</label><input id="ph-values" type="text" placeholder="3, 4, 5, 6, 7, 8"><p class="field-hint">Separate values with commas or spaces.</p></div>
+            <p id="ph-range-hint" class="field-hint">pH 0–14. Arrows: 0.5. Finer values can be typed.</p>
+            <div id="explicit-fields" hidden><label class="field-label" for="ph-values">pH values, in column order</label><input id="ph-values" type="text" placeholder="3, 4, 5, 6, 7, 8"></div>
             </section>
 
             <div class="calculation-count" id="calculation-count">Choose proteins to preview your calculation.</div>
             <section id="wizard-review" data-wizard-step="3" aria-label="Review and run" hidden>
-            <div class="defaults-summary"><h3>Ready with your standard settings</h3><p id="settings-summary"></p><p class="field-hint" id="settings-source">Saved defaults are used for new calculations. There is no need to check every option.</p></div>
+            <div class="defaults-summary"><h3>Calculation summary</h3><p id="settings-summary"></p><p class="field-hint" id="settings-source">Using saved defaults.</p></div>
             <details id="calculation-overrides" class="settings-details">
               <summary>Override settings for this calculation <span>optional</span></summary>
-              <p class="field-hint">Changes here affect only this calculation. Use Standard settings to change defaults for future calculations.</p>
+              <p class="field-hint">For this calculation only.</p>
               <button type="button" id="use-standard-settings" class="text-button">Use my saved defaults</button>
               <div id="override-controls">
             <div class="workers-setting">
             <label class="field-label" for="workers">Parallel cells</label>
             <input id="workers" type="number" min="1" max="{{ max_workers }}" step="1" value="{{ recommended_workers }}" required aria-describedby="workers-hint">
-            <p class="field-hint" id="workers-hint">{{ available_cpus }} logical CPUs available. Start with {{ recommended_workers }} concurrent cells; use 1 for large proteins or limited memory. More workers use more RAM. Calculation and re-rendering share this setting; figure composition stays serial.</p>
+            <p class="field-hint" id="workers-hint" data-help-for="workers">{{ available_cpus }} logical CPUs available. Start with {{ recommended_workers }} concurrent cells; use 1 for large proteins or limited memory. More workers use more RAM. Calculation and re-rendering share this setting; figure composition stays serial.</p>
+            <p class="field-hint">More parallel cells use more RAM.</p>
             </div>
 
-            <details class="settings-details"><summary>Figure &amp; calculation settings</summary><div class="two-fields"><label>Tile size, px<input id="size" type="number" min="64" max="4096" value="500"></label><label>DPI<input id="dpi" type="number" min="1" max="4800" value="300"></label><label>Potential limit, ±<input id="level" type="number" min="0.01" step="any" value="5"></label><label>Background<select id="background"><option value="white">White</option><option value="transparent">Transparent</option><option value="black">Black</option></select></label><label>Potential colors<select id="ramp"><option value="red,white,blue">Red → white → blue</option><option value="blue,white,red">Blue → white → red</option></select></label><label>Force field<select id="force-field"><option>PARSE</option><option>AMBER</option><option>CHARMM</option></select></label></div><label class="checkbox"><input id="ray" type="checkbox" checked> Ray trace final surfaces</label></details>
+            <details class="settings-details" open><summary>Figure &amp; calculation settings</summary><div class="two-fields"><label>Tile size, px<input id="size" type="number" min="64" max="4096" value="500"></label><label>DPI<input id="dpi" type="number" min="1" max="4800" value="300"></label><label>Potential limit, ±<input id="level" type="number" min="0.01" step="any" value="5"></label><label>Background<select id="background"><option value="white">White</option><option value="transparent">Transparent</option><option value="black">Black</option></select></label><label>Potential colors<select id="ramp"><option value="red,white,blue">Red → white → blue</option><option value="blue,white,red">Blue → white → red</option></select></label><label>Force field<select id="force-field"><option>PARSE</option><option>AMBER</option><option>CHARMM</option></select></label></div><label class="checkbox"><input id="ray" type="checkbox" checked> Ray trace final surfaces</label></details>
 
             <details class="settings-details">
               <summary>Publication styling</summary>
               <div class="two-fields">
-                <label>Font size, px<input id="font-size" type="number" min="1" max="256" step="1" value="22" required></label>
+                <label>Font size, px<input id="font-size" type="number" min="1" max="256" step="1" value="22" required aria-describedby="font-style-hint"></label>
                 <label>Outer margin, px<input id="outer-margin" type="number" min="0" max="1024" step="1" value="24" required></label>
                 <label>Column gap, px<input id="column-gap" type="number" min="0" max="1024" step="1" value="16" required></label>
                 <label>Row gap, px<input id="row-gap" type="number" min="0" max="1024" step="1" value="16" required></label>
@@ -114,9 +125,9 @@
               </div>
               <label class="field-label" for="ph-label-precision">pH label decimal places</label>
               <select id="ph-label-precision" aria-describedby="ph-label-hint"><option value="">Preserve input precision (default)</option><option value="0">0 decimal places</option><option value="1">1 decimal place</option><option value="2">2 decimal places</option><option value="3">3 decimal places</option><option value="4">4 decimal places</option><option value="5">5 decimal places</option><option value="6">6 decimal places</option></select>
-              <p class="field-hint" id="ph-label-hint">Display only: calculation pH values stay unchanged. A precision that gives different columns identical labels is rejected.</p>
+              <p class="field-hint" id="ph-label-hint" data-help-for="ph-label-precision">Display only: calculation pH values stay unchanged. A precision that gives different columns identical labels is rejected.</p>
               <label class="checkbox"><input id="legend" type="checkbox" checked> Show the shared potential legend</label>
-              <p class="field-hint">Uses Pillow's bundled default font, without requiring system fonts. Font and spacing sizes are pixels. Use Edit figure in history to restyle saved tiles without scientific tools.</p>
+              <p id="font-style-hint" class="field-hint" data-help-for="font-size">Uses Pillow's bundled default font, without requiring system fonts. Font and spacing sizes are pixels. Use Edit figure to restyle saved images without recalculating.</p>
             </details>
 
             <details class="settings-details">
@@ -129,11 +140,11 @@
                 <option value="3">3 · Surface-visible atoms only</option>
                 <option value="4">4 · Surface-visible heavy atoms only</option>
               </select>
-              <p class="field-hint" id="surface-mode-hint">PyMOL modes 0–4. The default normally excludes HETATM atoms from the surface; mode 1 includes them.</p>
+              <p class="field-hint" id="surface-mode-hint" data-help-for="surface-mode">PyMOL modes 0–4. The default normally excludes HETATM atoms from the surface; mode 1 includes them.</p>
               <label class="checkbox"><input id="surface-solvent" type="checkbox" aria-describedby="surface-solvent-hint"> Solvent-accessible surface</label>
-              <p class="field-hint" id="surface-solvent-hint">Unchecked uses the solvent-excluded molecular surface. This changes the displayed geometry, not the APBS calculation.</p>
+              <p class="field-hint" id="surface-solvent-hint" data-help-for="surface-solvent">Unchecked uses the solvent-excluded molecular surface. This changes the displayed geometry, not the APBS calculation.</p>
               <label class="checkbox"><input id="surface-ramp-above-mode" type="checkbox" checked aria-describedby="surface-ramp-hint"> Sample potential above the surface</label>
-              <p class="field-hint" id="surface-ramp-hint">PyMOL ramp-above mode. For a solvent-accessible surface, PyMOL's APBS interface normally turns this off. These choices remain independent.</p>
+              <p class="field-hint" id="surface-ramp-hint" data-help-for="surface-ramp-above-mode">PyMOL ramp-above mode. For a solvent-accessible surface, PyMOL's APBS interface normally turns this off. These choices remain independent.</p>
               <label class="field-label" for="ligand-representation">Ligand representation</label>
               <select id="ligand-representation" aria-describedby="ligand-render-hint">
                 <option value="sticks">Sticks (default)</option>
@@ -142,29 +153,28 @@
                 <option value="spheres">Spheres</option>
                 <option value="none">Hidden (no extra representation)</option>
               </select>
-              <p class="field-hint" id="ligand-render-hint">Applies to HETATM atoms retained in the prepared PQR, not only an uploaded ligand. Hidden does not remove atoms from the calculation or an inclusive surface. Shared MOL2 parameterization remains experimental.</p>
+              <p class="field-hint" id="ligand-render-hint" data-help-for="ligand-representation">Applies to HETATM atoms retained in the prepared PQR, not only an uploaded ligand. Hidden does not remove atoms from the calculation or an inclusive surface. Shared MOL2 parameterization remains experimental.</p>
             </details>
 
               </div>
             </details>
             </section>
-            <div id="form-message" role="status" aria-live="polite" hidden></div>
             <pre id="reuse-plan" class="field-hint" hidden aria-live="polite"></pre>
-            <div class="form-actions wizard-actions"><button type="button" id="wizard-back" class="button secondary" hidden>Back</button><button type="button" id="wizard-next" class="button primary">Next: pH →</button><button type="button" id="validate" class="button secondary" hidden>Validate</button><button type="submit" id="submit" class="button primary" disabled hidden>Start calculation <span>→</span></button></div>
-            <p class="form-footnote">Refine this calculation until it is ready. New calculation or Duplicate calculation starts a separate history item. Your original uploaded files are not modified.</p>
           </form>
-        </section>
+            <div class="form-actions wizard-actions"><button type="button" id="done-editing" class="button secondary">Cancel</button><button type="button" id="wizard-back" class="button secondary" hidden>Back</button><button type="button" id="wizard-next" class="button primary">Next: pH →</button><button type="button" id="validate" class="button secondary" hidden>Validate</button><button type="submit" form="run-form" id="submit" class="button primary" disabled hidden>Start calculation <span>→</span></button></div>
+            <p class="form-footnote">Original files are never modified.</p>
+        </dialog>
 
         <div class="results-column">
-          <section id="empty-state" class="empty-state card"><h2>Your results will appear here</h2><p>Add proteins, choose pH values, then start your calculation.</p><p>Select a calculation in Run history to review or edit its results.</p></section>
+          <section id="empty-state" class="empty-state card"><h2>Your results will appear here</h2><p>Choose New calculation in the sidebar to add proteins and select pH values.</p><p>Select a calculation in Run history to review or edit its results.</p></section>
 
           <section id="run-detail" class="card run-detail" hidden aria-live="polite">
-            <div class="run-heading"><div><p class="eyebrow" id="run-origin">CALCULATION</p><h2 id="run-title"></h2><p id="run-time" class="field-hint"></p></div><span id="run-status" class="status-badge"></span></div>
+            <div class="run-heading"><div><p class="eyebrow" id="run-origin">CALCULATION</p><h2 id="run-title" tabindex="-1"></h2><p id="run-time" class="field-hint"></p></div><span id="run-status" class="status-badge"></span></div>
             <div id="run-actions" class="run-actions" role="group" aria-label="Calculation actions">
               <span class="run-actions-label">Actions</span>
               <span class="run-action"><button id="edit-calculation" type="button" class="button primary" aria-describedby="edit-calculation-help" disabled>Edit calculation</button><span id="edit-calculation-help" class="run-action-help" role="tooltip" hidden><strong>Edit calculation</strong><span data-help="Load saved inputs and settings to rerun all stages. Updates this calculation after success; preserves its last good result on failure."></span></span></span>
-              <span class="run-action"><button id="rerender" type="button" class="button secondary" aria-describedby="rerender-help" disabled>Re-render</button><span id="rerender-help" class="run-action-help" role="tooltip" hidden><strong>Re-render</strong><span data-help="Change camera, colors, or surfaces using saved PQR/DX files. Updates this calculation after success without rerunning electrostatics."></span></span></span>
-              <span class="run-action"><button id="edit-figure" type="button" class="button secondary" aria-describedby="edit-figure-help" disabled>Edit figure</button><span id="edit-figure-help" class="run-action-help" role="tooltip" hidden><strong>Edit figure</strong><span data-help="Change labels, layout, and legend using saved images. Updates this calculation after success without recalculating or rendering surfaces."></span></span></span>
+              <span class="run-action"><button id="rerender" type="button" class="button secondary" aria-describedby="rerender-help" disabled>Re-render</button><span id="rerender-help" class="run-action-help" role="tooltip" hidden><strong>Re-render</strong><span data-help="Open a dialog to change camera, colors, or surfaces using saved PQR/DX files. Updates this calculation after success without rerunning electrostatics."></span></span></span>
+              <span class="run-action"><button id="edit-figure" type="button" class="button secondary" aria-describedby="edit-figure-help" disabled>Edit figure</button><span id="edit-figure-help" class="run-action-help" role="tooltip" hidden><strong>Edit figure</strong><span data-help="Open a dialog to change labels, layout, and legend using saved images. Updates this calculation after success without recalculating or rendering surfaces."></span></span></span>
               <span class="run-action duplicate-action"><button id="use-template" type="button" class="button secondary" aria-describedby="use-template-help" disabled>Duplicate calculation</button><span id="use-template-help" class="run-action-help" role="tooltip" hidden><strong>Duplicate calculation</strong><span data-help="Load a copy of saved inputs and settings. Starting it creates a separate calculation and keeps this result unchanged."></span></span></span>
             </div>
             <pre id="run-plan" hidden></pre>
@@ -177,25 +187,57 @@
             <details class="result-details" id="logs-details"><summary>Calculation logs &amp; provenance</summary><label class="field-label" for="log-select">Stage log</label><select id="log-select"><option value="">Select a log…</option></select><pre id="log-content">Select a stage log to inspect its latest output.</pre><pre id="worker-log" hidden></pre><a id="download-manifest" class="text-button" download hidden>Download manifest.json ↓</a><p class="field-hint">Saved in <code id="run-directory"></code></p></details>
           </section>
         </div>
-      </div>
       <footer class="page-footer">PDB2PQR / PROPKA <span>→</span> APBS <span>→</span> PyMOL <span>·</span> All calculations and files stay on your computer.</footer>
     </div>
   </main>
   <script type="application/json" id="preferences-data">{{ preferences | tojson }}</script>
+  <dialog id="artifact-dialog" aria-labelledby="artifact-title" aria-describedby="artifact-intro">
+    <form id="artifact-form" novalidate>
+      <div class="dialog-heading"><h2 id="artifact-title">Edit figure</h2><button id="artifact-close" type="button" class="icon-button" aria-label="Close result editor">×</button></div>
+      <p id="artifact-source" class="field-hint"></p>
+      <p id="artifact-intro"></p>
+      <div id="artifact-message" class="message" role="status" hidden></div>
+      <p id="artifact-tools-warning" class="message error" role="status" hidden>PyMOL is not ready. Close this dialog and check the tool status before re-rendering.</p>
+      <p id="artifact-loading" class="field-hint">Loading saved settings…</p>
+      <div id="artifact-body" hidden>
+        <section id="artifact-render-section" class="artifact-section" aria-labelledby="artifact-render-title">
+          <h3 id="artifact-render-title">Surface rendering</h3>
+          <div id="artifact-render-fields" class="two-fields"></div>
+          <div class="two-fields artifact-camera"><label for="artifact-camera">Camera<select id="artifact-camera"><option value="auto">Automatic orientation</option><option value="saved">Reuse saved camera</option><option value="upload">Choose a camera file</option></select></label><label id="artifact-view-label" for="artifact-view" hidden>PyMOL camera file<input id="artifact-view" type="file" accept=".txt"></label></div>
+          <details class="settings-details"><summary>Advanced surface &amp; ligand display</summary><div id="artifact-surface-fields" class="two-fields"></div></details>
+        </section>
+        <details id="artifact-layout-section" class="settings-details">
+          <summary>Figure layout &amp; publication styling</summary>
+          <div id="artifact-layout-fields" class="two-fields"></div>
+          <p id="artifact-background-hint" class="field-hint" hidden>Background fixed. Use Re-render to change it.</p>
+        </details>
+        <details id="artifact-selection-section" class="settings-details">
+          <summary>Protein labels, order &amp; pH columns</summary>
+          <p class="field-hint">Saved rows and pH values only.</p>
+          <div id="artifact-proteins" class="artifact-proteins"></div>
+          <label class="field-label" for="artifact-ph-values">pH values, in column order</label><input id="artifact-ph-values" type="text" required>
+          <p id="artifact-ph-available" class="field-hint"></p>
+        </details>
+        <p class="field-hint">Replaces the saved result on success. No undo.</p>
+      </div>
+      <div class="dialog-actions"><button id="artifact-validate" type="button" class="button secondary" disabled>Check settings</button><button id="artifact-cancel" type="button" class="button secondary">Cancel</button><button id="artifact-submit" type="submit" class="button primary" disabled>Update figure</button></div>
+    </form>
+  </dialog>
   <dialog id="preferences-dialog" aria-labelledby="preferences-title" aria-describedby="preferences-intro">
     <form id="preferences-form" novalidate>
       <div class="dialog-heading"><h2 id="preferences-title">Set your standard settings</h2><button type="button" id="close-preferences" class="icon-button" aria-label="Close standard settings">×</button></div>
-      <p id="preferences-intro">Configure pHmap once. New calculations reuse these settings; you only choose proteins and pH. You can change any setting for an individual calculation.</p>
+      <p id="preferences-intro">Defaults for new calculations. Existing results stay unchanged.</p>
       <div id="preferences-message" class="message error" role="status" hidden></div>
       <div class="two-fields preferences-quick">
-        <label>Parallel cells<input id="default-workers" type="number" min="1" max="{{ max_workers }}" step="1" required></label>
+        <label>Parallel cells<input id="default-workers" type="number" min="1" max="{{ max_workers }}" step="1" required aria-describedby="default-workers-hint"></label>
         <label>Tile size, px<input id="default-size" type="number" min="64" max="4096" step="1" required></label>
         <label>DPI<input id="default-dpi" type="number" min="1" max="4800" step="1" required></label>
         <label>Background<select id="default-background"><option value="white">White</option><option value="transparent">Transparent</option><option value="black">Black</option></select></label>
       </div>
-      <p class="field-hint">Start with {{ recommended_workers }} parallel cells. Each APBS calculation needs its own memory; more workers are not always faster.</p>
+      <p id="default-workers-hint" class="field-hint" data-help-for="default-workers">Start with {{ recommended_workers }} parallel cells. Each APBS calculation needs its own memory; more workers are not always faster.</p>
+      <p class="field-hint">More parallel cells use more RAM.</p>
       <details class="settings-details"><summary>More standard settings <span>optional</span></summary><div id="preferences-fields"></div></details>
-      <p class="field-hint">Stored on this computer, shared across workspaces and app versions. Files, proteins, pH selections, and saved calculations are not changed.</p>
+      <p class="field-hint">Saved on this computer.</p>
       <div class="dialog-actions"><button type="button" id="reset-preferences" class="text-button danger">Reset defaults</button><button type="button" id="skip-preferences" class="button secondary">Skip — use defaults</button><button type="submit" id="save-preferences" class="button primary">Save defaults</button></div>
     </form>
   </dialog>

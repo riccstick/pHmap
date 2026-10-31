@@ -131,3 +131,5 @@ def test_wizard_groups_run_inputs_and_keeps_defaults_outside_the_calculation_for
             assert "calculation-overrides" in parser.elements[identity]
             assert "wizard-review" in parser.elements[identity]
         assert "run-form" not in parser.elements["preferences-form"]
+        assert "calculation-dialog" in parser.elements["run-form"]
+        assert "run-form" not in parser.elements["done-editing"]

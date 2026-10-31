@@ -18,6 +18,7 @@ def _assets(page: str) -> list[str]:
 def test_html_and_all_assets_use_one_content_revision_and_are_not_cached(tmp_path: Path) -> None:
     with TestClient(create_app(tmp_path / "runs"), base_url="http://127.0.0.1") as client:
         page = client.get("/")
+        assert '<p class="brand-caption">Surface charge across pH</p>' in page.text
         revision = re.search(r'name="phmap-ui-version" content="([0-9a-f]+)"', page.text)[1]
         assert len(revision) == 16
         assert page.headers["cache-control"] == "no-store"

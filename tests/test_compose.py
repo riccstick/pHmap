@@ -155,8 +155,55 @@ def test_large_labels_and_legend_fit_even_with_tiny_tiles_and_zero_margins(
             assert x >= 0 and x + width <= image.width
             assert y >= 0 and y + height <= image.height
     assert [text for _, _, text in placements] == [
-        "Wide protein label", "7.123400", "-5", "0", "+5",
+        "Wide protein label", "pH", "7.123400", "-5", "0", "+5",
     ]
+
+
+@pytest.mark.parametrize("font_size", [10, 96])
+@pytest.mark.parametrize("background,foreground", [(None, "black"), ("white", "black"),
+                                                 ("black", "white")])
+@pytest.mark.parametrize("show_colorbar", [False, True])
+def test_ph_axis_label_aligns_with_values_in_the_protein_name_column(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, font_size: int,
+    background: str | None, foreground: str, show_colorbar: bool,
+) -> None:
+    import phmap.compose as composer
+
+    placements = []
+    original = composer._draw_text
+
+    def record(draw, position, text, font, color):  # type: ignore[no-untyped-def]
+        placements.append((position, composer._text_size(draw, text, font), text, color))
+        original(draw, position, text, font, color)
+
+    monkeypatch.setattr(composer, "_draw_text", record)
+    tile = tmp_path / "tile.png"
+    _tile(tile, (100, 100, 100, 255))
+    ph_values = [Decimal("0"), Decimal("14")]
+    output = compose_grid(
+        protein_order=[("first", "I"), ("second", "M")], ph_order=ph_values,
+        tiles=[RenderedTile(protein, ph, tile)
+               for protein in ("first", "second") for ph in ph_values],
+        output_path=tmp_path / "ph-axis.png",
+        settings=CompositionSettings(
+            font_size=font_size, outer_margin=0, label_gap=0, background=background,
+            foreground=foreground, show_colorbar=show_colorbar,
+        ),
+    )
+    rows = placements[:2]
+    axis, *values = placements[2:5]
+    assert axis[2] == "pH"
+    assert [value[2] for value in values] == ["0", "14"]
+    assert axis[1][0] > max(size[0] for _, size, _, _ in rows)
+    assert all(position[0] + size[0] == axis[0][0] + axis[1][0]
+               for position, size, _, _ in rows)
+    assert all(value[0][1] == axis[0][1] for value in values)
+    assert all(value[0][0] >= axis[0][0] + axis[1][0] for value in values)
+    assert all(color == foreground for _, _, _, color in placements)
+    with Image.open(output) as image:
+        for (x, y), (width, height), _, _ in placements:
+            assert x >= 0 and x + width <= image.width
+            assert y >= 0 and y + height <= image.height
 
 
 def test_legend_toggle_and_colors_stay_consistent(

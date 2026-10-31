@@ -156,6 +156,18 @@ def test_history_editor_validates_a_stage_plan_and_queues_an_immutable_derivativ
     assert result["cells"][0]["metrics"]["pqr"]["total_charge"] == -0.3
 
 
+@pytest.mark.parametrize("background", ["white", None])
+def test_artifact_editor_reports_the_saved_tile_background(
+    client: TestClient, background: str | None,
+) -> None:
+    run_id = _submit(client, ph_values="5", background=background).json()["run_id"]
+    assert _wait(client, run_id, {"completed", "failed"})["status"] == "completed"
+    for mode in ("compose", "render"):
+        response = client.get(f"/api/runs/{run_id}/editor", params={"operation": mode})
+        assert response.status_code == 200, response.text
+        assert response.json()["tile_background"] == background
+
+
 @pytest.mark.parametrize(
     "changes,explanation",
     [
@@ -498,11 +510,18 @@ def test_gui_loads_the_progress_controller_before_the_page_script(client: TestCl
     assert page.index("/static/protein-selection.js") < page.index("/static/app.js")
     assert page.index("/static/template-settings.js") < page.index("/static/app.js")
     assert page.index("/static/preferences.js") < page.index("/static/app.js")
+    assert page.index("/static/preferences.js") < page.index("/static/artifact-editor.js")
+    assert page.index("/static/artifact-editor.js") < page.index("/static/app.js")
+    assert page.index("/static/workspace-notice.js") < page.index("/static/app.js")
+    assert page.index("/static/dialog-help.js") < page.index("/static/app.js")
     assert client.get("/static/run-selection.js").status_code == 200
     assert client.get("/static/protein-selection.js").status_code == 200
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/static/template-settings.js").status_code == 200
     assert client.get("/static/preferences.js").status_code == 200
+    assert client.get("/static/artifact-editor.js").status_code == 200
+    assert client.get("/static/workspace-notice.js").status_code == 200
+    assert client.get("/static/dialog-help.js").status_code == 200
     assert 'id="use-template"' in page
 
 
@@ -1148,10 +1167,13 @@ def test_cli_run_history_is_visible_and_artifact_paths_are_contained(
 
 
 @pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("child_exits_first", [False, True])
 def test_cancel_active_and_queued_jobs_preserves_artifacts(
     client: TestClient,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     workers: int,
+    child_exits_first: bool,
 ) -> None:
     if available_cpus() < workers:
         pytest.skip("Parallel cancellation needs at least two available CPUs")
@@ -1185,6 +1207,21 @@ def test_cancel_active_and_queued_jobs_preserves_artifacts(
     assert client.post(f"/api/runs/{second}/cancel", headers=_token(client)).status_code == 200
     assert _wait(client, second, {"cancelled"})["completed"] == 0
     assert not (tmp_path / "runs" / second).exists()
+    if child_exits_first:
+        from phmap.gui.jobs import terminate_tree
+        from phmap.manifest import finish_task_state
+
+        def stop_child_before_worker(process, *, force=False):  # type: ignore[no-untyped-def]
+            if not force:
+                # Reproduce Windows taskkill ordering on every platform: the
+                # worker records a killed child before it is itself stopped.
+                path = tmp_path / "runs" / first / "manifest.json"
+                data = json.loads(path.read_text(encoding="utf-8"))
+                finish_task_state(data["tasks"][-1], "failed", error="Child terminated")
+                write_json(path, data)
+            terminate_tree(process, force=force)
+
+        monkeypatch.setattr("phmap.gui.jobs.terminate_tree", stop_child_before_worker)
     client.post(f"/api/runs/{first}/cancel", headers=_token(client))
     data = _wait(client, first, {"cancelled"})
     assert not data["can_cancel"]

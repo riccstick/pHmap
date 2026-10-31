@@ -545,12 +545,21 @@ class JobManager:
                 )
                 self._process = process
             cancellation_started: float | None = None
+            cancelled_tasks: set[str] = set()
             while process.poll() is None:
                 with self._condition:
                     cancelled = run_id in self._cancelled
                 if cancelled:
                     if cancellation_started is None:
                         cancellation_started = time.monotonic()
+                        cancelled_tasks = {
+                            task["task_id"]
+                            for task in read_json(worker_root / "manifest.json").get("tasks", [])
+                            if task.get("status") in {"running", "pending"}
+                            and not any(
+                                stage.get("status") == "failed" for stage in task.get("stages", [])
+                            )
+                        }
                         terminate_tree(process)
                     elif time.monotonic() - cancellation_started > 3:
                         terminate_tree(process, force=True)
@@ -570,7 +579,7 @@ class JobManager:
                     # A descendant may survive even after its parent exits.
                     terminate_tree(process, force=True)
                     status, error = "cancelled", "Calculation cancelled"
-                    self._mark_manifest(run_id, status, error)
+                    self._mark_manifest(run_id, status, error, cancelled_tasks=cancelled_tasks)
                 elif process.returncode == 0 and manifest.get("status") == "completed":
                     if update is not None:
                         update.commit()
@@ -597,7 +606,9 @@ class JobManager:
                 )
                 self._save(run_id)
 
-    def _mark_manifest(self, run_id: str, status: str, error: str) -> None:
+    def _mark_manifest(
+        self, run_id: str, status: str, error: str, *, cancelled_tasks: set[str] | None = None,
+    ) -> None:
         if self._jobs.get(run_id, {}).get("update_in_place"):
             update = self._updates.get(run_id)
             if update is None:
@@ -609,8 +620,23 @@ class JobManager:
         if manifest:
             manifest.update(status=status, error=error, finished_at=utc_now(), updated_at=utc_now())
             for task in manifest.get("tasks", []):
-                if task.get("status") in {"running", "pending"}:
+                # Windows taskkill can stop children before their worker. A
+                # killed command may therefore report failure during shutdown.
+                # Only normalize cells unfinished before termination, never
+                # failures that were already recorded when cancellation began.
+                late_failure = (
+                    status == "cancelled"
+                    and task.get("status") == "failed"
+                    and task.get("task_id") in (cancelled_tasks or ())
+                )
+                if task.get("status") in {"running", "pending"} or late_failure:
                     finish_task_state(task, status, error=error)
+                    if late_failure:
+                        for stage in task.get("stages", []):
+                            if stage.get("status") == "failed":
+                                stage.update(
+                                    status=status, error=error, finished_at=task["finished_at"],
+                                )
             write_json(path, manifest)
 
     def cancel(self, run_id: str) -> None:

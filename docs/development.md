@@ -247,12 +247,47 @@ files, pH selections, session identity, and executable paths. Automatic foregrou
 contrast is a GUI preference resolved into a concrete color at submission.
 
 The first-launch dialog is optional and remembers save/skip. The three-step
-wizard separates per-calculation structures/pH from reusable rendering defaults.
+wizard lives in a native calculation dialog, shared by new calculations, full
+editing, and duplication. The main workspace contains only result/progress views.
+Accepted submissions close the dialog; Cancel/close/Escape abort pending reads
+and discard the unsubmitted setup without deselecting the displayed result.
+Submission waits for a queue receipt before allowing dismissal. Notifications
+route to the open dialog or the workspace, so closed forms cannot hide errors.
+The wizard separates per-calculation structures/pH from reusable rendering defaults.
 `static/preferences.js` shares control serialization between the per-run and
 global editors; the global editor clones only override controls, never files or
 session fields. New forms use global defaults, while history editors restore
 their own complete settings. Saving defaults does not rewrite an existing form
 or run. The CLI does not implicitly load GUI preferences.
+
+`static/artifact-editor.js` owns separate modal state for saved figure composition
+and surface re-rendering. It reuses scoped setting serializers and cloned control
+definitions without replacing the calculation draft. Editor requests pin the
+source manifest digest; cancellation aborts read-only requests and ignores late
+responses. Validation errors stay in the dialog. A submitted update waits for its
+queue receipt before closing, then hands off to the normal progress controller.
+Calculation and artifact-editor errors receive focus and scroll into view, even
+when the user submits from lower fields. Artifact row reordering retains focus
+on the moved row; at a boundary, its label receives focus instead of a disabled
+arrow button.
+The editor API reports the tile background so composition can lock opaque tiles
+without guessing from a later figure's background. Full recalculation and explicit
+duplication continue to use the wizard; the CLI is unchanged.
+
+`static/dialog-help.js` adds native, keyboard-operable help disclosures after
+the global and artifact editors clone their controls. Technical explanations
+move beside their fields without changing values or serializers. Labels keep
+explicit associations; `aria-describedby` references remain scoped to each
+dialog. Escape first dismisses open help, while a subsequent Escape can dismiss
+the native dialog. Outside focus/click and dialog closure also clear help.
+Core limits, experimental/memory warnings, and destructive-update behavior stay
+visible. The most common settings remain expanded; advanced groups are optional.
+
+`static/workspace-notice.js` binds progress notices to a run, clears them on a
+terminal snapshot, and leaves newer errors or unrelated messages untouched.
+Notices are registered before selecting the queued run, so an operation that
+finishes before its first snapshot cannot leave a stale banner. Manual dismissal
+and history navigation detach the notice; later progress cannot revive it.
 
 An independent progress controller follows the editing calculation while the
 selected history stream can browse another result. Cancelled unstarted GUI jobs
@@ -307,6 +342,7 @@ node tests/frontend/template-settings.mjs
 node tests/frontend/saved-runs.mjs
 node tests/frontend/request-races.mjs
 node tests/frontend/preferences.mjs
+node tests/frontend/workspace-notice.mjs
 ```
 
 For full-page DOM/API regression tests, install the development-only JavaScript
@@ -323,8 +359,8 @@ and queue, with offline scientific-tool and RCSB fixtures. They cover initial
 setup save/skip/close/Escape, preferences/reset, wizard navigation, PDB fetching,
 uploads/drop/reordering/removal, camera/ligand reuse, validation, calculation,
 figure edits, re-rendering, duplication, queued/active cancellation, setup resume,
-history, logs, downloads, startup failure, stale scripts, missing styles and
-outdated-server recovery.
+history, logs, downloads, scoped field help, Escape/outside dismissal, startup
+failure, stale scripts, missing styles and outdated-server recovery.
 Native dialog presentation, file selection, scrolling and EventSource transport
 are simulated; these are not screenshot or real-browser layout tests. Pixel,
 keyboard/focus, native file-dialog and browser-engine checks still need an actual

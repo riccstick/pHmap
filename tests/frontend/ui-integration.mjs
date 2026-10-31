@@ -44,9 +44,13 @@ for (const source of fixture.styles) {
 }
 if (!w.HTMLDialogElement.prototype.showModal) {
   w.HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
-  w.HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
+  w.HTMLDialogElement.prototype.close = function () {
+    this.removeAttribute("open");
+    this.dispatchEvent(new w.Event("close"));
+  };
 }
-w.HTMLElement.prototype.scrollIntoView = function () {};
+const scrollRequests = [];
+w.HTMLElement.prototype.scrollIntoView = function (options) { scrollRequests.push({ element: this, options }); };
 w.confirm = () => true;
 w.fetch = async (url, options = {}) => {
   const message = { url: String(url), method: options.method || "GET", headers: options.headers || {} };
@@ -119,6 +123,7 @@ async function completed(previousRevision = null) {
 }
 
 async function checkPhControls() {
+  click("new-run");
   const arrow = (id, direction) => {
     document.querySelector(`[data-ph-input="${id}"][data-direction="${direction}"]`).click();
   };
@@ -168,6 +173,175 @@ async function checkPhControls() {
   assert.equal((await json("/api/runs")).length, 0, "Validation must not start work.");
 }
 
+async function checkDialogHelp() {
+  function helpFor(id) {
+    const control = $(id);
+    const description = (control.getAttribute("aria-describedby") || "").split(" ")
+      .map((id) => document.getElementById(id)).find((node) => node?.closest(".field-help"));
+    assert.ok(description, `An on-demand explanation must exist for ${id}.`);
+    assert.ok(control.labels.length, `${id} must keep its accessible label.`);
+    const help = description.closest(".field-help");
+    assert.match(help.querySelector("summary").getAttribute("aria-label"), /^Help for \S/);
+    assert.equal(help.closest("dialog"), control.closest("dialog"), "Scoped help must not refer to a different form.");
+    return help;
+  }
+  const helpControls = ["pdb-code", "view", "ligand", "workers", "size", "dpi", "level", "background",
+    "ramp", "force-field", "font-size", "foreground", "outer-margin", "column-gap", "row-gap", "label-gap",
+    "ph-label-precision", "legend", "ray", "surface-mode", "surface-solvent", "surface-ramp-above-mode",
+    "ligand-representation", "ph-step", "ph-values"];
+  for (const id of helpControls) {
+    assert.equal(helpFor(id).open, false, "Long explanations start collapsed.");
+    if (!["pdb-code", "view", "ligand", "ph-step", "ph-values"].includes(id)) {
+      assert.equal(helpFor(`default-${id}`).open, false);
+    }
+  }
+  for (const id of ["size", "dpi", "font-size", "level", "workers", "surface-mode", "surface-solvent",
+    "surface-ramp-above-mode", "ligand-representation", "camera", "ph-values"]) helpFor(`artifact-${id}`);
+  const ids = Array.from(document.querySelectorAll("[id]"), (node) => node.id);
+  assert.equal(new Set(ids).size, ids.length, "Enhancement must not duplicate hint or field IDs.");
+  document.querySelectorAll("dialog [aria-describedby]").forEach((control) => {
+    for (const id of control.getAttribute("aria-describedby").split(" ")) assert.ok($(id));
+  });
+  assert.equal($("ligand").labels[0].textContent.includes("experimental"), true);
+  assert.equal($("ph-range-hint").closest(".field-help"), null, "pH bounds stay visible.");
+
+  const defaults = await json("/api/preferences");
+  click("open-preferences");
+  await waitFor(() => $("preferences-dialog").open, "open defaults for help checks");
+  const sizeHelp = helpFor("default-size"), dpiHelp = helpFor("default-dpi");
+  const before = httpRequests.length;
+  sizeHelp.querySelector("summary").click();
+  await waitFor(() => sizeHelp.open, "open default field help");
+  assert.equal(httpRequests.length, before, "Opening help must not submit or load settings.");
+  assert.match(sizeHelp.textContent, /pixels/);
+  dpiHelp.querySelector("summary").click();
+  await waitFor(() => dpiHelp.open && !sizeHelp.open, "only one explanation at a time");
+  dpiHelp.querySelector("summary").focus();
+  const escape = new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+  dpiHelp.querySelector("summary").dispatchEvent(escape);
+  assert.equal(escape.defaultPrevented, true);
+  assert.equal(dpiHelp.open, false);
+  assert.equal($("preferences-dialog").open, true, "First Escape dismisses help, not the editor.");
+  assert.equal(document.activeElement, dpiHelp.querySelector("summary"));
+  const secondEscape = new w.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+  document.dispatchEvent(secondEscape);
+  assert.equal(secondEscape.defaultPrevented, false, "Next Escape can reach the native dialog dismissal.");
+  sizeHelp.querySelector("summary").click();
+  await waitFor(() => sizeHelp.open, "reopen help");
+  $("default-size").focus();
+  assert.equal(sizeHelp.open, false, "Tabbing back to another field dismisses help.");
+  sizeHelp.querySelector("summary").click();
+  await waitFor(() => sizeHelp.open, "open help before outside click");
+  $("preferences-title").dispatchEvent(new w.Event("pointerdown", { bubbles: true }));
+  assert.equal(sizeHelp.open, false);
+  sizeHelp.querySelector("summary").click();
+  await waitFor(() => sizeHelp.open, "open help before closing dialog");
+  click("close-preferences");
+  assert.equal(sizeHelp.open, false);
+  assert.deepEqual((await json("/api/preferences")).defaults, defaults.defaults);
+
+  click("new-run");
+  chooseFile("proteins", "source.pdb", "ATOM\n");
+  go(2); setValue("ph-start", "5"); setValue("ph-stop", "5"); go(3);
+  $("calculation-overrides").open = true;
+  const rayHelp = helpFor("ray"), checked = $("ray").checked;
+  rayHelp.querySelector("summary").click();
+  await waitFor(() => rayHelp.open, "checkbox explanation");
+  assert.equal($("ray").checked, checked, "Help outside a label must not toggle its checkbox.");
+  setValue("size", "64");
+  $("ray").checked = false;
+  click("submit");
+  const source = await completed();
+  assert.equal(rayHelp.open, false, "Queued calculation cleanup also closes field help.");
+  assert.equal(source.configuration.render.size, 64);
+
+  await openArtifact("compose");
+  const fontHelp = helpFor("artifact-font-size");
+  fontHelp.querySelector("summary").click();
+  await waitFor(() => fontHelp.open, "figure editor explanation");
+  assert.match(fontHelp.textContent, /Pillow/);
+  assert.equal($("artifact-background-hint").hidden, false, "Opaque background restrictions stay visible.");
+  click("artifact-cancel");
+  assert.equal(fontHelp.open, false);
+  await openArtifact("render");
+  const surfaceHelp = helpFor("artifact-surface-mode");
+  surfaceHelp.closest(".settings-details").open = true;
+  surfaceHelp.querySelector("summary").click();
+  await waitFor(() => surfaceHelp.open, "surface-rendering explanation");
+  assert.match(surfaceHelp.textContent, /HETATM/);
+  click("artifact-close");
+  assert.equal(surfaceHelp.open, false);
+  assert.equal((await json(`/api/runs/${source.run_id}`)).manifest_sha256, source.manifest_sha256);
+}
+
+async function checkDialogFeedback() {
+  function checkError(id) {
+    assert.equal($(id).hidden, false);
+    assert.equal($(id).getAttribute("role"), "alert");
+    assert.equal(document.activeElement, $(id), "An error must receive focus outside the disabled form body.");
+    assert.equal(scrollRequests.at(-1).element, $(id), "An error must be revealed even after scrolling to lower fields.");
+    assert.equal(scrollRequests.at(-1).options.block, "nearest");
+  }
+  click("new-run");
+  for (const name of ["A", "B", "C"]) chooseFile("proteins", `${name}.pdb`, "ATOM\n");
+  go(2); setValue("ph-start", "5"); setValue("ph-stop", "5"); go(3);
+  setValue("size", "64"); $("ray").checked = false;
+  $("calculation-overrides").open = true;
+  $("font-size").closest(".settings-details").open = true;
+  $("calculation-dialog").scrollTop = 700;
+  setValue("font-size", "0");
+  click("submit");
+  await waitFor(() => !$("form-message").hidden && !$("submit").disabled, "full calculation validation error");
+  checkError("form-message");
+  assert.equal((await json("/api/runs")).length, 0);
+  setValue("font-size", "22"); click("submit");
+  const source = await completed();
+  for (const mode of ["compose", "render"]) {
+    await openArtifact(mode);
+    $("artifact-dialog").scrollTop = 700;
+    if (mode === "render") $("artifact-layout-section").open = true;
+    setValue("artifact-font-size", "0"); click("artifact-validate");
+    await waitFor(() => $("artifact-message").textContent.includes("font_size")
+      && !$("artifact-validate").disabled, `${mode} validation error`);
+    checkError("artifact-message");
+    setValue("artifact-font-size", "22");
+    $("artifact-selection-section").open = true;
+    const rows = $("artifact-proteins");
+    const ids = () => Array.from(rows.children, (row) => row.querySelector('input[type="text"]').value);
+    const move = (row, direction) => {
+      const button = rows.children[row].querySelectorAll("button")[direction === -1 ? 0 : 1];
+      button.focus(); button.click();
+    };
+    move(0, 1);
+    assert.deepEqual(ids(), ["B", "A", "C"]);
+    assert.equal(document.activeElement, rows.children[1].querySelectorAll("button")[1]);
+    document.activeElement.click();
+    assert.deepEqual(ids(), ["B", "C", "A"]);
+    assert.equal(document.activeElement, rows.children[2].querySelector('input[type="text"]'),
+      "At the last row, focus the moved label instead of its disabled Down button.");
+    move(2, -1);
+    assert.deepEqual(ids(), ["B", "A", "C"]);
+    assert.equal(document.activeElement, rows.children[1].querySelectorAll("button")[0]);
+    document.activeElement.click();
+    assert.deepEqual(ids(), ["A", "B", "C"]);
+    assert.equal(document.activeElement, rows.children[0].querySelector('input[type="text"]'),
+      "At the first row, focus the moved label instead of its disabled Up button.");
+    click("artifact-cancel");
+  }
+  assert.equal((await json(`/api/runs/${source.run_id}`)).manifest_sha256, source.manifest_sha256);
+  const fetch = w.fetch;
+  w.fetch = async (url, options) => {
+    if (String(url).includes("/editor?operation=compose")) throw new Error("Saved settings unavailable");
+    return fetch(url, options);
+  };
+  click("edit-figure");
+  await waitFor(() => $("artifact-message").textContent.includes("Saved settings unavailable"), "editor load error");
+  checkError("artifact-message");
+  assert.equal($("artifact-submit").disabled, true);
+  click("artifact-cancel");
+  w.fetch = fetch;
+}
+
 function checkCompactLayout() {
   const heading = document.querySelector("main h1");
   assert.equal(heading.textContent, "Surface maps");
@@ -180,6 +354,9 @@ function checkCompactLayout() {
   assert.equal($("empty-state").textContent.includes("Run history"), true);
   assert.equal($("figure-panel").contains($("figure-key")), true);
   assert.equal($("figure-key").hidden, true, "A key belongs to a result, not an empty workspace.");
+  assert.equal($("calculation-dialog").open, false);
+  assert.equal($("calculation-dialog").contains($("run-form")), true);
+  assert.equal(document.querySelector(".workspace-grid"), null, "The result view must not reserve a configuration column.");
 }
 
 async function checkToolDisclosure() {
@@ -200,6 +377,11 @@ async function checkToolDisclosure() {
   assert.ok($("toolchain-checks").querySelector(".tool-chip.failed"));
   assert.equal($("toolchain-dot").className, "status-dot failed");
   assert.equal($("submit").disabled, true);
+  click("new-run");
+  assert.equal($("calculation-dialog").open, true);
+  assert.equal($("calculation-tools-warning").hidden, false);
+  assert.match($("calculation-tools-warning").textContent, /check the tool status/);
+  click("done-editing");
   await request({ test_action: "tool_availability", available: true });
   click("recheck-tools");
   await waitFor(() => $("toolchain-title").textContent === "Calculation tools are ready"
@@ -267,6 +449,254 @@ function checkRunActionHelp() {
   assert.match($("use-template-help").textContent, /separate calculation|unchanged/);
 }
 
+async function openArtifact(mode) {
+  click(mode === "compose" ? "edit-figure" : "rerender");
+  await waitFor(() => $("artifact-dialog").open && !$("artifact-body").hidden
+    && !$("artifact-validate").disabled, `open ${mode} dialog`);
+}
+
+async function checkArtifactDialogs(sourceId) {
+  const before = await json(`/api/runs/${sourceId}`);
+  const defaults = await json("/api/preferences");
+  setValue("run-name", "Unsubmitted calculation draft");
+  setValue("font-size", "31");
+  const mainLabels = Array.from(document.querySelectorAll(".protein-item input"), (input) => input.value);
+  await openArtifact("compose");
+  assert.equal($("artifact-render-section").hidden, true);
+  assert.equal($("artifact-layout-section").open, true);
+  assert.equal($("artifact-font-size").value, "30", "Load saved settings, not an unfinished wizard draft.");
+  assert.equal($("artifact-background").disabled, true, "Opaque tile backgrounds cannot be edited by composition.");
+  assert.equal(document.getElementById("artifact-force-field"), null);
+  setValue("artifact-font-size", "0"); click("artifact-submit");
+  await waitFor(() => $("artifact-message").textContent.includes("font_size")
+    && !$("artifact-validate").disabled, "inline invalid-setting error");
+  assert.equal($("artifact-dialog").open, true);
+  assert.equal((await json(`/api/runs/${sourceId}`)).manifest_sha256, before.manifest_sha256);
+  setValue("artifact-font-size", "34");
+  setValue("artifact-ph-values", "6"); click("artifact-validate");
+  await waitFor(() => $("artifact-message").textContent.includes("saved pH")
+    && !$("artifact-validate").disabled, "reject new artifact pH columns");
+  setValue("artifact-ph-values", "7, 5");
+  const rows = $("artifact-proteins");
+  const edited = rows.querySelector('input[type="text"]');
+  edited.value = "Figure-specific row label";
+  edited.dispatchEvent(new w.Event("input"));
+  rows.children[0].querySelectorAll("button")[1].click();
+  assert.equal(rows.children[1].querySelector('input[type="text"]').value, "Figure-specific row label");
+  rows.children[0].querySelector('input[type="checkbox"]').click();
+  click("artifact-validate");
+  await waitFor(() => $("artifact-message").textContent.includes("Settings are valid")
+    && !$("artifact-validate").disabled, "check figure settings without queueing");
+  assert.match($("artifact-message").textContent, /2 saved cells/);
+  click("artifact-cancel");
+  assert.equal($("artifact-dialog").open, false);
+  assert.equal($("run-name").value, "Unsubmitted calculation draft");
+  assert.equal($("font-size").value, "31");
+  assert.deepEqual(Array.from(document.querySelectorAll(".protein-item input"), (input) => input.value), mainLabels);
+  assert.equal((await json(`/api/runs/${sourceId}`)).manifest_sha256, before.manifest_sha256);
+  assert.deepEqual((await json("/api/preferences")).defaults, defaults.defaults);
+  await openArtifact("compose");
+  assert.equal($("artifact-font-size").value, "30", "Cancel must discard only the modal's edits.");
+  $("artifact-dialog").dispatchEvent(new w.Event("cancel", { cancelable: true }));
+  assert.equal($("artifact-dialog").open, false);
+  await openArtifact("render");
+  assert.equal($("artifact-render-section").hidden, false);
+  assert.equal($("artifact-layout-section").open, false);
+  assert.equal($("artifact-background").disabled, false);
+  assert.equal($("artifact-render-fields").contains($("artifact-background")), true);
+  assert.equal($("artifact-camera").value, "saved");
+  setValue("artifact-camera", "upload");
+  assert.equal($("artifact-view-label").hidden, false);
+  click("artifact-submit");
+  await waitFor(() => $("artifact-message").textContent.includes("camera file")
+    && !$("artifact-validate").disabled, "require an explicitly selected camera upload");
+  chooseFile("artifact-view", "camera.txt", Array.from({ length: 18 }, (_, i) => i + 1).join(", "));
+  click("artifact-validate");
+  await waitFor(() => $("artifact-message").textContent.includes("Settings are valid")
+    && !$("artifact-validate").disabled, "validate a replacement camera");
+  click("artifact-close");
+  assert.equal($("artifact-dialog").open, false);
+  assert.equal($("run-name").value, "Unsubmitted calculation draft");
+}
+
+async function checkArtifactLifecycle() {
+  click("new-run");
+  chooseFile("proteins", "source.pdb", "ATOM\n");
+  go(2); document.querySelector('input[name="ph-mode"][value="explicit"]').click();
+  setValue("ph-values", "5"); go(3); setValue("size", "64");
+  $("ray").checked = false;
+  click("submit");
+  const first = await completed();
+  const fetch = w.fetch;
+  let releaseRead, readReached = false;
+  const readGate = new Promise((resolve) => { releaseRead = resolve; });
+  w.fetch = async (url, options) => {
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/editor?operation=compose")) { readReached = true; await readGate; }
+    return response; // Deliberately ignore cancellation here to test the state guard.
+  };
+  click("edit-figure");
+  await waitFor(() => $("artifact-dialog").open && readReached, "open loading editor");
+  click("artifact-cancel");
+  await openArtifact("render");
+  releaseRead();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal($("artifact-title").textContent, "Re-render surfaces");
+  assert.equal($("artifact-render-section").hidden, false);
+  click("artifact-cancel");
+  w.fetch = fetch;
+  await openArtifact("compose");
+  let releaseValidation, validationReached = false;
+  const validationGate = new Promise((resolve) => { releaseValidation = resolve; });
+  w.fetch = async (url, options) => {
+    const response = await fetch(url, options);
+    if (url === "/api/validate") { validationReached = true; await validationGate; }
+    return response;
+  };
+  click("artifact-validate");
+  await waitFor(() => validationReached && $("artifact-validate").disabled, "read-only validation pending");
+  click("artifact-cancel");
+  w.fetch = fetch;
+  await openArtifact("render");
+  releaseValidation();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal($("artifact-title").textContent, "Re-render surfaces");
+  assert.equal($("artifact-message").hidden, true, "An old validation must not populate a new dialog.");
+  click("artifact-cancel");
+  await openArtifact("compose");
+  setValue("artifact-font-size", "35");
+  let posts = 0, releasePost;
+  const postGate = new Promise((resolve) => { releasePost = resolve; });
+  w.fetch = async (url, options) => {
+    if (url === "/api/runs" && options?.method === "POST") { posts += 1; await postGate; }
+    return fetch(url, options);
+  };
+  click("artifact-submit");
+  await waitFor(() => posts === 1, "update awaiting queue receipt");
+  assert.equal($("artifact-cancel").disabled, true);
+  $("artifact-form").dispatchEvent(new w.Event("submit", { bubbles: true, cancelable: true }));
+  $("artifact-dialog").dispatchEvent(new w.Event("cancel", { cancelable: true }));
+  assert.equal($("artifact-dialog").open, true, "Do not abort a submission with an uncertain outcome.");
+  assert.equal(posts, 1, "Double-submit must queue only one update.");
+  const oldFigure = $("figure").getAttribute("src");
+  releasePost();
+  await waitFor(() => !$("artifact-dialog").open, "close accepted update");
+  const updated = await completed(oldFigure);
+  assert.equal(updated.run_id, first.run_id);
+  assert.equal(updated.configuration.composition.font_size, 35);
+  w.fetch = fetch;
+  await openArtifact("compose");
+  const external = (await json(`/api/runs/${first.run_id}/editor?operation=compose`)).settings;
+  external.font_size = 39;
+  const queued = await request({ url: "/api/runs", method: "POST",
+    headers: { "X-Phmap-Token": document.querySelector('meta[name="phmap-token"]').content },
+    fields: { settings: JSON.stringify(external) } });
+  assert.equal(queued.status, 202);
+  let snapshot;
+  const deadline = Date.now() + 15000;
+  do {
+    snapshot = await json(`/api/runs/${first.run_id}`);
+    if (snapshot.status === "completed") break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } while (Date.now() < deadline);
+  assert.equal(snapshot.status, "completed");
+  assert.equal(snapshot.configuration.composition.font_size, 39);
+  click("artifact-validate");
+  await waitFor(() => $("artifact-message").textContent.includes("manifest changed")
+    && !$("artifact-validate").disabled, "stale editor cannot overwrite an external update");
+  assert.equal($("artifact-dialog").open, true);
+  assert.match($("artifact-message").textContent, /Close and reopen/);
+  click("artifact-cancel");
+  assert.equal((await json(`/api/runs/${first.run_id}`)).configuration.composition.font_size, 39);
+  assert.equal((await json("/api/runs")).length, 1);
+}
+
+async function checkCalculationDialog() {
+  assert.equal($("calculation-dialog").open, false);
+  click("new-run");
+  assert.equal($("calculation-dialog").open, true);
+  assert.equal($("submit").form, $("run-form"));
+  assert.equal($("wizard-proteins").hidden, false);
+  chooseFile("proteins", "discarded.pdb", "ATOM\n");
+  $("calculation-dialog").dispatchEvent(new w.Event("cancel", { cancelable: true }));
+  assert.equal($("calculation-dialog").open, false);
+  assert.equal(document.querySelectorAll(".protein-item").length, 0);
+  assert.equal((await json("/api/runs")).length, 0);
+  click("new-run"); click("close-calculation");
+  assert.equal($("calculation-dialog").open, false);
+  click("new-run");
+  chooseFile("proteins", "source.pdb", "ATOM\n");
+  click("wizard-next");
+  assert.equal(document.activeElement, $("ph-start"));
+  document.querySelector('input[name="ph-mode"][value="explicit"]').click();
+  setValue("ph-values", "5"); click("wizard-next"); setValue("size", "64");
+  click("submit");
+  const first = await completed();
+  assert.equal($("calculation-dialog").open, false);
+  assert.equal($("run-detail").hidden, false);
+  assert.equal($("workspace-message").hidden, true, "Finished calculations must not leave stale progress notices.");
+  const figure = $("figure").getAttribute("src");
+  click("new-run");
+  assert.equal($("run-detail").hidden, false, "Opening setup must not clear the selected result.");
+  assert.equal($("figure").getAttribute("src"), figure);
+  click("done-editing");
+  assert.equal($("calculation-dialog").open, false);
+  assert.equal(runId(), first.run_id);
+  const fetch = w.fetch;
+  let readReached = false, release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  w.fetch = async (url, options) => {
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/template?edit=true")) { readReached = true; await gate; }
+    return response;
+  };
+  click("edit-calculation");
+  await waitFor(() => readReached && $("calculation-dialog").open, "loading calculation setup");
+  assert.equal($("run-form").hidden, true);
+  click("done-editing");
+  click("new-run");
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal($("setup-title").textContent, "New calculation");
+  assert.equal(document.querySelectorAll(".protein-item").length, 0);
+  click("close-calculation");
+  w.fetch = async (url, options) => {
+    if (String(url).endsWith("/template?edit=true")) throw new Error("Saved input setup is unavailable");
+    return fetch(url, options);
+  };
+  click("edit-calculation");
+  await waitFor(() => $("form-message").textContent.includes("Saved input setup is unavailable"), "inline setup load failure");
+  assert.equal($("run-form").hidden, true);
+  assert.equal($("submit").disabled, true);
+  assert.equal($("done-editing").disabled, false);
+  click("done-editing");
+  assert.equal($("run-detail").hidden, false);
+  assert.equal($("figure").getAttribute("src"), figure);
+  w.fetch = fetch;
+  click("new-run"); chooseFile("proteins", "second.pdb", "ATOM\n");
+  go(2); document.querySelector('input[name="ph-mode"][value="explicit"]').click();
+  setValue("ph-values", "5"); go(3); setValue("size", "64");
+  let posts = 0, releasePost;
+  const postGate = new Promise((resolve) => { releasePost = resolve; });
+  w.fetch = async (url, options) => {
+    if (url === "/api/runs" && options?.method === "POST") { posts += 1; await postGate; }
+    return fetch(url, options);
+  };
+  click("submit");
+  await waitFor(() => posts === 1, "queue receipt pending");
+  assert.equal($("close-calculation").disabled, true);
+  assert.equal($("done-editing").disabled, true);
+  $("calculation-dialog").dispatchEvent(new w.Event("cancel", { cancelable: true }));
+  $("run-form").dispatchEvent(new w.Event("submit", { cancelable: true }));
+  assert.equal($("calculation-dialog").open, true);
+  assert.equal(posts, 1);
+  releasePost();
+  await waitFor(() => !$("calculation-dialog").open && runId() !== first.run_id, "new result takes over after queueing");
+  assert.equal((await completed()).status, "completed");
+  assert.equal((await json("/api/runs")).length, 2);
+  w.fetch = fetch;
+}
+
 try {
   for (const script of fixture.scripts) {
     if (fixture.scenario === "startup-failure" && script.url.includes("preferences.js")) continue;
@@ -310,6 +740,14 @@ try {
       await checkToolDisclosure();
     } else if (fixture.scenario === "ph-controls") {
       await checkPhControls();
+    } else if (fixture.scenario === "dialog-help") {
+      await checkDialogHelp();
+    } else if (fixture.scenario === "dialog-feedback") {
+      await checkDialogFeedback();
+    } else if (fixture.scenario === "artifact-lifecycle") {
+      await checkArtifactLifecycle();
+    } else if (fixture.scenario === "calculation-dialog") {
+      await checkCalculationDialog();
     } else {
       click("open-preferences");
       await waitFor(() => $("preferences-dialog").open, "open standard settings");
@@ -369,6 +807,8 @@ try {
       assert.equal((await json("/api/runs")).length, 0, "Validate must not queue work.");
       click("submit");
       const first = await completed();
+      assert.equal($("workspace-message").hidden, true);
+      assert.equal($("calculation-dialog").open, false, "Accepted calculations return to full-width results.");
       assert.equal($("figure-key").hidden, false);
       assert.match($("figure-ramp").style.backgroundImage, /red, white, blue/);
       assert.equal(first.completed, 4);
@@ -382,29 +822,33 @@ try {
       assert.equal(Buffer.from(download.bytes, "base64").subarray(1, 4).toString(), "PNG");
       const manifest = await json($("download-manifest").getAttribute("href"));
       assert.equal(manifest.status, "completed");
-      click("edit-figure");
-      await waitFor(() => $("submit").textContent === "Update figure →" && !$("submit").disabled, "open figure editor");
+      await checkArtifactDialogs(originalId);
+      await openArtifact("compose");
       assert.equal($("wizard-review").hidden, false);
-      setValue("font-size", "34");
-      const oldFigure = $("figure").getAttribute("src"); click("submit");
+      setValue("artifact-font-size", "34");
+      const oldFigure = $("figure").getAttribute("src"); click("artifact-submit");
+      await waitFor(() => !$("artifact-dialog").open, "close accepted figure update");
       assert.equal((await completed(oldFigure)).run_id, originalId);
-      click("rerender");
-      await waitFor(() => $("submit").textContent === "Update surface renders →" && !$("submit").disabled, "open re-render editor");
-      click("clear-saved-view");
-      setValue("size", "96"); setValue("surface-mode", "2");
-      setValue("ramp", "blue,white,red");
+      assert.equal($("workspace-message").hidden, true, "A figure update clears its notice when finished.");
+      assert.equal($("run-name").value, "Unsubmitted calculation draft");
+      assert.equal($("font-size").value, "31");
+      await openArtifact("render");
+      setValue("artifact-camera", "auto");
+      setValue("artifact-size", "96"); setValue("artifact-surface-mode", "2");
+      setValue("artifact-ramp", "blue,white,red");
       assert.match($("figure-ramp").style.backgroundImage, /red, white, blue/, "Unsubmitted settings must not relabel a saved figure.");
-      const oldRender = $("figure").getAttribute("src"); click("submit");
+      const oldRender = $("figure").getAttribute("src"); click("artifact-submit");
       await waitFor(() => $("run-status").textContent !== "completed", "re-render started");
       assert.equal($("figure-key").hidden, true, "Pending colors must not label the last good image.");
       const rendered = await completed(oldRender);
+      assert.equal($("workspace-message").hidden, true, "A re-render clears its notice when finished.");
       assert.equal(rendered.configuration.render.size, 96);
       assert.equal(rendered.configuration.view, null);
       assert.equal($("figure-key").hidden, false);
       assert.match($("figure-ramp").style.backgroundImage, /blue, white, red/);
       assert.match($("figure-key").getAttribute("aria-label"), /negative blue, neutral white, positive red/);
       click("edit-calculation");
-      await waitFor(() => $("wizard-proteins").hidden === false && !$("submit").disabled, "load full calculation settings");
+      await waitFor(() => $("calculation-dialog").open && $("wizard-proteins").hidden === false && !$("submit").disabled, "load full calculation settings");
       click("clear-saved-ligand");
       go(2); setValue("ph-values", "5"); go(3); click("submit");
       await waitFor(() => $("run-status").textContent !== "completed", "queue full recalculation");
@@ -428,9 +872,12 @@ try {
       $("log-select").value = Array.from($("log-select").options).find((option) => option.value.endsWith("pdb2pqr.stdout.log")).value;
       $("log-select").dispatchEvent(new w.Event("change"));
       await waitFor(() => $("log-content").textContent.includes("prepared"), "load calculation log");
-      click("edit-figure");
-      await waitFor(() => $("submit").textContent === "Update figure →" && !$("submit").disabled, "reopen original editor");
+      await openArtifact("compose");
+      click("artifact-cancel");
+      click("edit-calculation");
+      await waitFor(() => $("calculation-dialog").open && !$("run-form").inert, "reopen full configuration");
       click("done-editing");
+      assert.equal($("calculation-dialog").open, false);
       assert.equal($("template-notice").hidden, true);
       assert.equal($("wizard-proteins").hidden, false);
       click("open-preferences");
@@ -445,6 +892,12 @@ try {
       go(2); document.querySelector('input[name="ph-mode"][value="explicit"]').click();
       setValue("ph-values", "5, 7"); go(3); setValue("size", "64"); click("submit");
       await waitFor(() => $("cells").textContent.includes("Calculating potential"), "active APBS stage");
+      assert.equal($("workspace-message").hidden, false);
+      assert.equal($("workspace-message").dataset.kind, "progress");
+      assert.equal(w.getComputedStyle($("workspace-message")).borderRadius, "8px");
+      assert.match($("workspace-message").textContent, /Calculating surface maps/);
+      document.querySelector("[data-notice-dismiss]").click();
+      assert.equal($("workspace-message").hidden, true);
       for (const id of ["edit-calculation", "rerender", "edit-figure", "use-template"]) {
         assert.equal($(id).hidden, false, "Actions should remain discoverable during a calculation.");
         assert.equal($(id).disabled, true);
@@ -458,13 +911,17 @@ try {
       await waitFor(() => $("run-status").textContent === "queued" && !$("cancel").disabled, "queued calculation");
       const queuedId = runId(); click("cancel");
       await waitFor(() => $("run-status").textContent === "cancelled" && !$("submit").disabled, "cancel queued calculation");
+      assert.equal($("workspace-message").hidden, true);
       assert.equal($("edit-calculation").disabled, false);
       assert.equal($("rerender").disabled, true);
       assert.match($("rerender-help").textContent, /no saved artifacts/);
-      click("submit");
+      click("edit-calculation");
+      await waitFor(() => $("calculation-dialog").open && !$("run-form").inert, "edit a cancelled queued setup");
+      go(3); click("submit");
       await waitFor(() => $("run-status").textContent === "queued" && !$("cancel").disabled, "resume cancelled setup");
       assert.equal(runId(), queuedId); click("cancel");
       await waitFor(() => $("run-status").textContent === "cancelled", "cancel resumed setup");
+      assert.equal($("workspace-message").hidden, true);
       document.querySelector(`[data-run-id="${activeId}"]`).click();
       await waitFor(() => runId() === activeId && !$("cancel").disabled, "select active calculation");
       click("cancel");

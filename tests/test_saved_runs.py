@@ -23,10 +23,25 @@ from phmap.workflow import LocalWorkflow, WorkflowOptions
 
 
 @pytest.fixture
-def saved(tmp_path: Path) -> SavedRun:
+def scientific_tools(tmp_path: Path) -> tuple[Path, Path, Path]:
+    pdb2pqr, apbs, pymol = fake_tools(tmp_path)
+    # Exercise the Windows filename on every platform so hard-coded,
+    # extensionless paths also fail in local macOS/Linux regression runs.
+    if pymol.suffix != ".exe":
+        pymol = pymol.rename(pymol.with_suffix(".exe"))
+    return pdb2pqr, apbs, pymol
+
+
+@pytest.fixture
+def pymol_executable(scientific_tools: tuple[Path, Path, Path]) -> Path:
+    return scientific_tools[2]
+
+
+@pytest.fixture
+def saved(tmp_path: Path, scientific_tools: tuple[Path, Path, Path]) -> SavedRun:
     pdb = tmp_path / "protein.pdb"
     pdb.write_text("ATOM\n")
-    pdb2pqr, apbs, pymol = fake_tools(tmp_path)
+    pdb2pqr, apbs, pymol = scientific_tools
     result = LocalWorkflow(
         validate_run_inputs(pdb, ph_values=["5.0", "7.0"], labels=["Original"]),
         WorkflowOptions(
@@ -103,6 +118,7 @@ def test_render_reuses_science_without_raw_inputs_and_regenerates_scripts(
     saved: SavedRun,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    pymol_executable: Path,
 ) -> None:
     shutil.rmtree(saved.root / "inputs")
     shutil.rmtree(saved.root / "renders")
@@ -119,7 +135,7 @@ def test_render_reuses_science_without_raw_inputs_and_regenerates_scripts(
         potential_level=3,
         surface_mode=4,
         surface_solvent=True,
-        pymol_executable=tmp_path / "tools" / "pymol",
+        pymol_executable=pymol_executable,
         pdb2pqr_executable="missing-pdb2pqr",
         apbs_executable="missing-apbs",
     )
@@ -294,7 +310,9 @@ def test_cli_inherits_settings_and_plan_is_read_only(
     assert "Re-render" in capsys.readouterr().err
 
 
-def test_cli_render_calls_only_pymol(saved: SavedRun, tmp_path: Path) -> None:
+def test_cli_render_calls_only_pymol(
+    saved: SavedRun, tmp_path: Path, pymol_executable: Path,
+) -> None:
     output = tmp_path / "cli-render"
     assert (
         main(
@@ -306,7 +324,7 @@ def test_cli_render_calls_only_pymol(saved: SavedRun, tmp_path: Path) -> None:
                 "--size",
                 "80",
                 "--pymol-executable",
-                str(tmp_path / "tools/pymol"),
+                str(pymol_executable),
                 "--pdb2pqr-executable",
                 "not-installed",
                 "--apbs-executable",
@@ -403,7 +421,7 @@ def test_bad_saved_metadata_is_reported_cleanly(saved: SavedRun, malformation: s
 
 
 def test_cli_in_place_preserves_science_for_later_rendering(
-    saved: SavedRun, tmp_path: Path
+    saved: SavedRun, tmp_path: Path, pymol_executable: Path,
 ) -> None:
     digest = saved.digest
     assert main(["compose", str(saved.root), "--font-size", "35", "--in-place"]) == 0
@@ -419,7 +437,7 @@ def test_cli_in_place_preserves_science_for_later_rendering(
                 "80",
                 "--in-place",
                 "--pymol-executable",
-                str(tmp_path / "tools/pymol"),
+                str(pymol_executable),
             ]
         )
         == 0
@@ -438,6 +456,7 @@ def test_saved_rendering_runs_in_parallel_and_keeps_input_order(
     saved: SavedRun,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    pymol_executable: Path,
 ) -> None:
     monkeypatch.setattr("phmap.configuration.available_cpus", lambda: 4)
     render = PyMOLBackend.render
@@ -456,7 +475,7 @@ def test_saved_rendering_runs_in_parallel_and_keeps_input_order(
             saved.options,
             workers=2,
             output_dir=tmp_path / "parallel-render",
-            pymol_executable=tmp_path / "tools/pymol",
+            pymol_executable=pymol_executable,
         ),
     )
     assert workflow.plan()["execution"]["effective_workers"] == 2
@@ -473,6 +492,7 @@ def test_interrupted_saved_render_finalizes_all_unfinished_cells(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     workers: int,
+    pymol_executable: Path,
 ) -> None:
     monkeypatch.setattr("phmap.configuration.available_cpus", lambda: 4)
 
@@ -486,7 +506,7 @@ def test_interrupted_saved_render_finalizes_all_unfinished_cells(
             saved.options,
             workers=workers,
             output_dir=tmp_path / "interrupted-render",
-            pymol_executable=tmp_path / "tools/pymol",
+            pymol_executable=pymol_executable,
         ),
     )
     with pytest.raises(KeyboardInterrupt):

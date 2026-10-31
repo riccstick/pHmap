@@ -528,6 +528,7 @@ def create_app(
             )
             data["settings"].update(operation=operation, source_manifest_sha256=saved.digest)
             data["settings"].update(name=jobs.snapshot(run_id)["name"], update_in_place=True)
+            data["tile_background"] = saved.tile_options.background
             return data
         except (ConfigurationError, ValueError, KeyError, TypeError, OSError) as exc:
             raise HTTPException(422, f"Cannot open saved run: {exc}") from exc
