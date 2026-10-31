@@ -12,6 +12,7 @@ const controls = Object.fromEntries(Object.entries({
   background: "white", "run-name": "Test", "ph-start": "3", "ph-stop": "8", "ph-step": "1",
   "ph-values": "", size: "500", dpi: "300", level: "5", ramp: "red,white,blue", "force-field": "PARSE",
   "surface-mode": "0", "ligand-representation": "sticks",
+  workers: "2",
   foreground: "auto", "font-size": "22", "outer-margin": "24",
   "column-gap": "16", "row-gap": "16", "label-gap": "16", "ph-label-precision": "",
 }).map(([key, value]) => [key, { value }]));
@@ -30,6 +31,7 @@ const serialize = runInNewContext(`(${formFunction})`, {
   proteinSelection: { inputs: () => ({ labels: ["WT"], structures: [{ pdb_id: "3SQR" }], uploads: [] }) },
   FormData: FormDataFixture,
   templateSource: null, reuseView: false, reuseLigand: false,
+  operation: "full", sourceManifest: null, updateInPlace: false,
 });
 const settings = () => JSON.parse(serialize().get("settings"));
 assert.equal(settings().surface_mode, 0);
@@ -40,6 +42,7 @@ assert.equal(settings().font_size, 22);
 assert.equal(settings().outer_margin, 24);
 assert.equal(settings().show_colorbar, true);
 assert.equal(settings().ph_label_precision, null);
+assert.equal(settings().workers, 2);
 controls.background.value = "black";
 assert.equal(settings().foreground, "white");
 controls.foreground.value = "#555555";

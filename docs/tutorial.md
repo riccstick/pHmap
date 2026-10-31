@@ -51,21 +51,63 @@ pixi run gui
 It opens the interface at <http://127.0.0.1:8765>. For environment setup and
 more command-line options, see the [development guide](development.md).
 
+## Run calculations and rendering in parallel
+
+The **Parallel cells** field controls how many protein/pH cells can run at once.
+For example, two proteins at six pH values create 12 independent cells. Each
+cell runs PDB2PQR, APBS, and PyMOL in order, while other cells can run alongside
+it. **Re-render** uses the same setting for parallel PyMOL processes. The final
+Python composition remains serial, and the GUI still queues one calculation at
+a time. Protein rows and pH columns keep their requested order regardless of
+which cell finishes first.
+
+The GUI starts with up to **2** workers, limited by available logical CPUs.
+Start there, or use **1** for large proteins or limited memory: every concurrent
+APBS process needs its own memory. More workers are not always faster. The
+requested count accepts 1–32; execution also caps it at the available CPU count
+and the number of selected cells. This is a concurrency limit, not CPU pinning.
+
+The CLI keeps its sequential default. Add `--workers` to enable parallel work:
+
+```console
+pixi run phmap run example/mutant2.pdb --ph-range 3 8 1 --workers 2
+pixi run phmap render runs/SOURCE_RUN --workers 2 --in-place
+```
+
+`--workers auto` chooses the same conservative default as the GUI. `--workers 1`
+disables cell parallelism. Saved setups restore their requested worker count;
+you can change it before recalculating or re-rendering. Validation reports the
+effective concurrency. Figure-only edits do not run parallel scientific tools.
+
+When cells run in parallel, pHmap sets common OpenMP/BLAS thread limits and
+PyMOL's `max_threads` to 1 in each child process, to reduce nested CPU
+competition. A single-cell execution leaves backend threading unchanged.
+Requested/effective concurrency and this thread policy are saved separately
+from scientific and render settings in `configuration.execution`.
+
+If a cell fails, pHmap stops scheduling new cells and starting later scientific
+stages. Commands already running finish under their normal timeouts before the
+failure is reported. GUI cancellation terminates the owned worker and its
+scientific children. Failed or cancelled in-place updates keep the last good
+calculation unchanged.
+
 ## Reuse a calculation from history
 
 1. Select a finished calculation in **Run history**.
-2. Click **Use as template**. This loads the setup without starting any tools.
+2. Click **Edit calculation**. This loads the setup without starting any tools.
 3. Adjust pH values, labels/order, rendering, or publication styling. You can
    remove saved structure rows and add new files or PDB entries.
 4. Saved camera and shared ligand inputs are marked in the form. Upload a new
    file to replace one, or use **remove saved camera/ligand** to omit it.
-5. Click **Start calculation** to create a new run with a new name/ID.
+5. Click **Rerun this calculation** to replace its current state after success.
 
 The app uses hash-verified copies retained with the original run, not the
-original upload paths or fresh archive downloads. The source figure, settings,
-and files are not modified. Every scientific/rendering stage runs again; this
-is **not** resume or composition-only figure editing. The new manifest's
-`based_on` field identifies and hashes the source manifest or submission record.
+original upload paths or fresh archive downloads. Every scientific/rendering
+stage runs again for **Edit calculation**; this is not scientific-stage resume.
+The history entry, calculation ID and creation time stay the same. Previous
+figures and outdated scientific files are replaced, not kept as versions.
+Your original uploaded files are never modified. **Duplicate calculation**
+loads the same setup but explicitly starts a separate calculation instead.
 
 New runs retain the original pH range bounds and step, even when the stop is
 not reached: `3–8` at step `2` remains that range, calculating `3, 5, 7`.
@@ -81,6 +123,89 @@ outside the GUI's current size/count limits cannot be loaded as templates.
 
 **New calculation** clears the form and cancels pending setup/PDB requests;
 late responses cannot repopulate the new setup.
+
+## Edit figures and re-render saved runs
+
+Select a terminal run in **Run history**, then choose an action:
+
+| Action | Reuses | Runs again |
+| --- | --- | --- |
+| **Edit figure** | Saved PNG tiles | Python composition only; no scientific executables required |
+| **Re-render** | Saved PQR structures and DX potentials | PyMOL and composition; no PDB2PQR or APBS required |
+| **Edit calculation** | Saved raw structures and setup | Full calculation, including PDB2PQR and APBS |
+
+Opening an editor does not start work. Adjust labels, order, font size, margins,
+spacing, DPI, pH label precision, or legend visibility. Remove/reorder saved rows
+and choose a subset/order of the **existing** pH values if desired. Re-rendering
+also permits camera replacement/removal, surface/ligand representations,
+resolution, potential colors/limit, ray tracing, and background changes.
+
+The form prominently identifies the calculation being edited. Click **Validate**
+to verify artifacts and display the stage plan, then **Update figure**,
+**Update surface renders**, or **Rerun this calculation**. Each action updates
+the same history item and output paths. The updated preview refreshes automatically.
+After your first calculation starts, subsequent submissions also target that
+calculation; choose **New calculation** to leave it and start a separate one.
+Click **Done editing** when satisfied: the latest result remains visible and
+saved, and the form leaves editing mode. You can reopen it later from history.
+The confirmation makes clear that unsubmitted form changes are discarded;
+apply them with **Update** or **Rerun** first if you want to keep them.
+
+Workers build replacements in private temporary storage. Until success, the
+last good figure remains available. A failed or cancelled attempt cannot
+replace it. Successful updates discard the previous state; there is no undo
+or automatic version history. A per-calculation lock rejects simultaneous edits,
+and a small on-disk journal recovers interrupted installation on restart.
+
+Equivalent CLI examples (replace `runs/SOURCE_RUN` with your run folder):
+
+```console
+pixi run phmap compose runs/SOURCE_RUN --font-size 32 --outer-margin 40 --plan
+pixi run phmap compose runs/SOURCE_RUN --font-size 32 --outer-margin 40 --no-legend --in-place
+pixi run phmap render runs/SOURCE_RUN --size 1000 --ramp-colors blue white red --in-place
+pixi run phmap render runs/SOURCE_RUN --view example/set_view.txt --surface-mode 1 --in-place
+pixi run phmap compose runs/SOURCE_RUN --protein-id mutant2 --label "Variant" --ph 7 --ph 5 --in-place
+```
+
+Settings inherit from the source unless overridden. Repeat `--protein-id` and
+`--label` once per selected row and `--ph` once per selected column; omitted
+selections retain the entire saved order. `--auto-view` removes a saved camera,
+`--transparent` requests transparency, and `--preserve-ph-labels` restores exact
+pH label spelling instead of fixed decimal places. `--ray` enables ray tracing
+if the source disabled it. The GUI updates in place by default. The CLI requires
+explicit `--in-place` permission to overwrite a calculation. Omit that flag for
+a separate derivative; use `--output-dir NEW_DIR` for an exact destination or
+`--runs-dir DIR` for its parent (default `runs`). Existing output destinations
+are rejected; destination flags cannot be combined with `--in-place`.
+
+Important limits:
+
+- Composition cannot change tile size, camera, surface settings or ramp/limit:
+  the legend must continue to describe the saved surfaces. Use **Re-render**.
+- Transparent saved tiles can be placed on a different figure background.
+  Opaque tile backgrounds are baked in and need re-rendering to change.
+- New structures, ligands, force fields or pH values need a full calculation.
+  Reuse never silently recalculates missing data or substitutes new input bytes.
+- Artifact reuse does not require the original raw structures to remain present.
+  The necessary saved PNG or PQR/DX files must match their manifest hashes.
+  Paths are confined to the selected run, and archived PML/commands are never executed.
+- Failed/interrupted runs can supply a selected subset of completed artifacts.
+  A cell with completed PDB2PQR/APBS but a failed renderer can be re-rendered;
+  missing PQR/DX cannot. This is explicit stage/cell selection, not automatic resume.
+- In-place edits retain verified raw inputs, PQR/DX and applicable stage logs for
+  the selected cells, allowing **Edit figure → Re-render → Edit calculation**
+  without losing their scientific data. Removed rows/columns are dropped. A full
+  recalculation replaces the scientific state, including obsolete pH files.
+- Explicit separate CLI derivatives retain only artifacts they use. To re-render
+  a composition-only derivative, use its scientific source instead.
+
+The current manifest records `last_update` (operation and previous manifest hash),
+the current configuration, stage plan, artifact checksums and producer versions.
+This is current-state provenance, not retained previous versions. Explicit
+separate derivatives still record `based_on`. Reused PQR/DX keep their scientific provenance;
+the installed PDB2PQR/APBS versions are irrelevant because neither executes.
+Re-rendering always invalidates old tiles and records the currently used PyMOL
+version. A source changed after editor loading/queueing fails verification.
 
 ## PDBx/mmCIF and PDB IDs
 
@@ -250,6 +375,6 @@ and render settings are unchanged by publication styling.
 
 Effective values, font source, and displayed pH labels are recorded under
 `configuration.composition` in the manifest; `configuration.ph_values` retains
-the exact calculation values. These controls currently apply to **new runs**.
-A saved-run editing action with verified tile reuse and separately versioned
-figures remains planned; existing figures are not overwritten by a styling edit.
+the exact calculation values. Use **Edit figure** or `phmap compose` to apply
+these settings to verified saved tiles. GUI edits replace the current figure;
+CLI edits require `--in-place` to do so. See [saved-run editing](#edit-figures-and-re-render-saved-runs).

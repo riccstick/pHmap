@@ -29,9 +29,10 @@
 
       <div class="workspace-grid">
         <section class="setup-panel card">
-          <div class="card-heading"><h2>Set up a calculation</h2><span class="step-badge">01 — CONFIGURE</span></div>
+          <div class="card-heading"><h2 id="setup-title">Set up a calculation</h2><span class="step-badge">01 — CONFIGURE</span></div>
           <form id="run-form">
-            <p class="field-hint" id="template-notice" hidden>Setup copied from <code id="template-source"></code>. Starting creates a full new calculation; the source result is unchanged.</p>
+            <div class="session-notice" id="template-notice" hidden><strong id="template-action">Editing calculation</strong> <code id="template-source"></code><p id="template-behavior"></p><button id="done-editing" type="button" class="button secondary small">Done editing</button></div>
+            <p class="field-hint" id="operation-notice" hidden></p>
             <label class="field-label" for="run-name">Calculation name <span class="optional">optional</span></label>
             <input id="run-name" type="text" maxlength="120" placeholder="e.g. Wild type vs mutants">
 
@@ -48,6 +49,9 @@
             <div id="range-fields" class="three-fields"><label>From<input id="ph-start" type="number" min="0" max="14" step="any" value="3" required></label><label>To<input id="ph-stop" type="number" min="0" max="14" step="any" value="8" required></label><label>Step<input id="ph-step" type="number" min="0.0001" max="14" step="any" value="1" required></label></div>
             <div id="explicit-fields" hidden><label class="field-label" for="ph-values">pH values, in column order</label><input id="ph-values" type="text" placeholder="3, 4, 5, 6, 7, 8"><p class="field-hint">Separate values with commas or spaces.</p></div>
             <div class="calculation-count" id="calculation-count">Choose proteins to preview your calculation.</div>
+            <label class="field-label" for="workers">Parallel cells</label>
+            <input id="workers" type="number" min="1" max="{{ max_workers }}" step="1" value="{{ recommended_workers }}" required aria-describedby="workers-hint">
+            <p class="field-hint" id="workers-hint">{{ available_cpus }} logical CPUs available. Start with {{ recommended_workers }} concurrent cells; use 1 for large proteins or limited memory. More workers use more RAM. Calculation and re-rendering share this setting; figure composition stays serial.</p>
 
             <details class="settings-details"><summary>Camera &amp; ligand <span>optional</span></summary><label class="field-label" for="view">PyMOL camera view</label><input id="view" type="file" accept=".txt"><p class="field-hint">An 18-number view exported from PyMOL. Without one, each structure is automatically oriented.</p><label class="field-label" for="ligand">Shared ligand <span class="optional">experimental</span></label><input id="ligand" type="file" accept=".mol2"><p class="field-hint">Applied to every supplied protein.</p></details>
             <div id="saved-view" class="field-hint" hidden>Saved camera will be reused. Choose a camera file above to replace it, or <button id="clear-saved-view" type="button" class="text-button">remove saved camera</button>.</div>
@@ -69,7 +73,7 @@
               <select id="ph-label-precision" aria-describedby="ph-label-hint"><option value="">Preserve input precision (default)</option><option value="0">0 decimal places</option><option value="1">1 decimal place</option><option value="2">2 decimal places</option><option value="3">3 decimal places</option><option value="4">4 decimal places</option><option value="5">5 decimal places</option><option value="6">6 decimal places</option></select>
               <p class="field-hint" id="ph-label-hint">Display only: calculation pH values stay unchanged. A precision that gives different columns identical labels is rejected.</p>
               <label class="checkbox"><input id="legend" type="checkbox" checked> Show the shared potential legend</label>
-              <p class="field-hint">Uses Pillow's bundled default font, without requiring system fonts. Font and spacing sizes are pixels; the background is set under Figure &amp; calculation settings. These options style a new calculation; editing saved runs is not available yet.</p>
+              <p class="field-hint">Uses Pillow's bundled default font, without requiring system fonts. Font and spacing sizes are pixels. Use Edit figure in history to restyle saved tiles without scientific tools.</p>
             </details>
 
             <details class="settings-details">
@@ -99,8 +103,9 @@
             </details>
 
             <div id="form-message" role="status" aria-live="polite" hidden></div>
+            <pre id="reuse-plan" class="field-hint" hidden aria-live="polite"></pre>
             <div class="form-actions"><button type="button" id="validate" class="button secondary">Validate</button><button type="submit" id="submit" class="button primary" disabled>Start calculation <span>→</span></button></div>
-            <p class="form-footnote">Every run is saved separately. Your original files are preserved.</p>
+            <p class="form-footnote">Refine this calculation until it is ready. New calculation or Duplicate calculation starts a separate history item. Your original uploaded files are not modified.</p>
           </form>
         </section>
 
@@ -111,8 +116,12 @@
 
           <section id="run-detail" class="card run-detail" hidden aria-live="polite">
             <div class="run-heading"><div><p class="eyebrow" id="run-origin">CALCULATION</p><h2 id="run-title"></h2><p id="run-time" class="field-hint"></p></div><span id="run-status" class="status-badge"></span></div>
-            <button id="use-template" type="button" class="button secondary small" hidden>Use as template</button>
-            <p class="field-hint">Reuse a finished run's setup, edit it, and start a separate calculation. Loading a template does not start any tools.</p>
+            <button id="edit-calculation" type="button" class="button secondary small" hidden>Edit calculation</button>
+            <button id="use-template" type="button" class="button secondary small" hidden>Duplicate calculation</button>
+            <button id="edit-figure" type="button" class="button secondary small" hidden>Edit figure</button>
+            <button id="rerender" type="button" class="button secondary small" hidden>Re-render</button>
+            <p class="field-hint">Edit calculation reruns all stages; Edit figure reuses tiles; Re-render reuses PQR/DX. All update this calculation in place after success. Duplicate calculation is the explicit way to keep a separate copy.</p>
+            <pre id="run-plan" hidden></pre>
             <div class="progress-heading"><span id="progress-label"></span><button id="cancel" class="text-button danger" type="button" hidden>Cancel calculation</button></div>
             <progress id="run-progress" value="0" max="100" aria-label="Calculation progress"></progress><p id="active-stage" class="active-stage"></p>
             <div id="run-error" class="message error" hidden></div>

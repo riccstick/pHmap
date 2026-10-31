@@ -5,12 +5,13 @@ import { runInNewContext } from "node:vm";
 const app = await readFile(new URL("../../src/phmap/gui/static/app.js", import.meta.url), "utf8");
 const proteinSource = await readFile(new URL("../../src/phmap/gui/static/protein-selection.js", import.meta.url), "utf8");
 const ProteinSelection = runInNewContext(`${proteinSource}\nProteinSelection;`);
-const functions = ["addPdb", "cancelPdbFetch", "useTemplate", "cancelTemplateLoad"].map((name) => {
-  const match = app.match(new RegExp(`(?:async )?function ${name}\\(\\) \\{[\\s\\S]*?\\n\\}`));
+const functions = ["addPdb", "cancelPdbFetch", "useTemplate", "cancelTemplateLoad", "openEditor", "resetSetup"].map((name) => {
+  const match = app.match(new RegExp(`(?:async )?function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`));
   assert.ok(match, name);
   return match[0];
 }).join("\n");
 const resetBody = app.match(/\$\("new-run"\)\.onclick = \(\) => \{([\s\S]*?)\n\};/)[1];
+const finishBody = app.match(/\$\("done-editing"\)\.onclick = \(\) => \{([\s\S]*?)\n\};/)[1];
 
 function harness() {
   const selection = new ProteinSelection();
@@ -26,15 +27,19 @@ function harness() {
     busy: false, fetching: false, pdbAbort: null, templateAbort: null,
     selected: "source-run", selectedStatus: "completed", selectedCanTemplate: true,
     templateSource: "source-run", reuseView: false, reuseLigand: false,
+    operation: "full", sourceManifest: null, selectedCanRework: true,
+    updateInPlace: true, editingRunning: false,
+    window: { confirm: () => true },
     proteins: selection.rows, proteinSelection: selection,
     $: (id) => { assert.ok(controls[id], id); return controls[id]; },
     api: (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject })),
     message: (text) => messages.push(text), applyTemplate: (value) => applied.push(value),
-    renderProteins() {}, updateButtons() {}, syncSavedInputs() {}, syncPhMode() {},
+    renderProteins() {}, updateButtons() {}, syncSavedInputs() {}, syncPhMode() {}, syncOperation() {},
     selection: { close() {} }, refreshHistory() {},
   };
   const methods = runInNewContext(`${functions}\nfunction newCalculation() {${resetBody}\n}\n`
-    + "({ addPdb, cancelPdbFetch, useTemplate, cancelTemplateLoad, newCalculation });", state);
+    + `function finishEditing() {${finishBody}\n}\n`
+    + "({ addPdb, cancelPdbFetch, useTemplate, cancelTemplateLoad, openEditor, newCalculation, finishEditing });", state);
   return { state, controls, requests, messages, applied, methods, rows: selection.rows };
 }
 
@@ -108,3 +113,21 @@ function harness() {
   assert.equal(test.requests.length, 0, "Older jobs without a saved setup must not offer an action.");
 }
 console.log("Request-race checks passed");
+
+{
+  const test = harness();
+  const pending = test.methods.openEditor("compose");
+  assert.match(test.requests[0].url, /editor\?operation=compose$/);
+  test.methods.newCalculation();
+  test.requests[0].resolve({ source: "old editor" });
+  await pending;
+  assert.equal(test.applied.length, 0);
+  assert.equal(test.state.operation, "full");
+}
+{
+  const test = harness();
+  test.methods.finishEditing();
+  assert.equal(test.state.selected, "source-run", "Done editing keeps the reviewed result visible.");
+  assert.equal(test.state.templateSource, null);
+  assert.equal(test.state.updateInPlace, false);
+}

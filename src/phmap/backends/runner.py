@@ -98,6 +98,7 @@ class CommandRunner:
 
     log_dir: Path
     default_timeout: float = 900.0
+    environment: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
         self.log_dir = Path(self.log_dir)
@@ -129,9 +130,7 @@ class CommandRunner:
         command = self._normalise_argv(argv)
         work_dir = Path(cwd).resolve()
         if not work_dir.is_dir():
-            raise BackendValidationError(
-                f"Command working directory does not exist: {work_dir}"
-            )
+            raise BackendValidationError(f"Command working directory does not exist: {work_dir}")
 
         effective_timeout = self.default_timeout if timeout is None else timeout
         if (
@@ -142,20 +141,14 @@ class CommandRunner:
             raise BackendValidationError("timeout must be finite and positive")
 
         child_env = None
-        if env is not None:
+        effective_env = {**(self.environment or {}), **(env or {})}
+        if effective_env:
             child_env = os.environ.copy()
-            for key, value in env.items():
-                if (
-                    not isinstance(key, str)
-                    or not key
-                    or "=" in key
-                    or "\x00" in key
-                ):
+            for key, value in effective_env.items():
+                if not isinstance(key, str) or not key or "=" in key or "\x00" in key:
                     raise BackendValidationError(f"Invalid environment key: {key!r}")
                 if not isinstance(value, str):
-                    raise BackendValidationError(
-                        f"Environment value for {key!r} must be a string"
-                    )
+                    raise BackendValidationError(f"Environment value for {key!r} must be a string")
                 if "\x00" in value:
                     raise BackendValidationError(
                         f"Environment value for {key!r} contains a NUL byte"
@@ -168,9 +161,7 @@ class CommandRunner:
         started = time.monotonic()
 
         try:
-            with stdout_path.open("wb") as stdout_stream, stderr_path.open(
-                "wb"
-            ) as stderr_stream:
+            with stdout_path.open("wb") as stdout_stream, stderr_path.open("wb") as stderr_stream:
                 try:
                     completed = subprocess.run(
                         command,
@@ -186,8 +177,7 @@ class CommandRunner:
                     )
                 except subprocess.TimeoutExpired as exc:
                     message = (
-                        f"\nphmap: command timed out after "
-                        f"{effective_timeout:g} seconds\n"
+                        f"\nphmap: command timed out after {effective_timeout:g} seconds\n"
                     ).encode()
                     stderr_stream.write(message)
                     stderr_stream.flush()
@@ -251,21 +241,16 @@ class CommandRunner:
                 **hidden_process_options(),
             )
         except subprocess.TimeoutExpired as exc:
-            raise VersionProbeError(
-                f"Version probe for {resolved} exceeded {timeout:g}s"
-            ) from exc
+            raise VersionProbeError(f"Version probe for {resolved} exceeded {timeout:g}s") from exc
         except OSError as exc:
-            raise VersionProbeError(
-                f"Could not probe version of {resolved}: {exc}"
-            ) from exc
+            raise VersionProbeError(f"Could not probe version of {resolved}: {exc}") from exc
 
         output = "\n".join(
             part.strip() for part in (completed.stdout, completed.stderr) if part.strip()
         )
         if check and completed.returncode != 0:
             raise VersionProbeError(
-                f"Version probe for {resolved} exited with status "
-                f"{completed.returncode}: {output}"
+                f"Version probe for {resolved} exited with status {completed.returncode}: {output}"
             )
         return VersionInfo(
             executable=resolved,

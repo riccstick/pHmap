@@ -8,6 +8,7 @@ const proteinSelection = new ProteinSelection();
 const proteins = proteinSelection.rows;
 let selected = null;
 let toolsReady = false;
+let pymolReady = false;
 let busy = false;
 let fetching = false;
 let lastLogPaths = "";
@@ -18,6 +19,11 @@ let reuseView = false;
 let reuseLigand = false;
 let templateAbort = null;
 let pdbAbort = null;
+let operation = "full";
+let sourceManifest = null;
+let selectedCanRework = false;
+let updateInPlace = false;
+let editingRunning = false;
 const selection = new RunSelection({
   load: (runId, options) => api(`/api/runs/${encodeURIComponent(runId)}`, options),
   terminal,
@@ -61,19 +67,31 @@ function message(text, error = false) {
 
 function updateButtons() {
   const loading = templateAbort !== null;
-  $("submit").disabled = busy || fetching || loading || !proteins.length || !toolsReady;
+  $("submit").disabled = busy || fetching || loading || editingRunning || !proteins.length || !requiredToolsReady();
   $("validate").disabled = busy || fetching || loading || !proteins.length;
-  $("fetch-pdb").disabled = busy || fetching || loading;
+  $("fetch-pdb").disabled = busy || fetching || loading || operation !== "full";
   $("fetch-pdb").textContent = fetching ? "Fetching…" : "Add PDB entry";
-  $("proteins").disabled = busy || loading;
+  $("proteins").disabled = busy || loading || operation !== "full";
   $("use-template").disabled = busy || fetching || loading || !selectedCanTemplate;
-  $("use-template").textContent = loading ? "Loading setup…" : "Use as template";
+  $("use-template").textContent = loading ? "Loading setup…" : "Duplicate calculation";
+  $("edit-calculation").disabled = busy || fetching || loading || !selectedCanTemplate;
   $("run-form").inert = loading;
-  $("submit").textContent = busy ? "Submitting…" : "Start calculation →";
+  $("edit-figure").disabled = busy || fetching || loading || !selectedCanRework;
+  $("rerender").disabled = $("edit-figure").disabled;
+  $("new-run").disabled = busy;
+  $("done-editing").disabled = busy || loading || editingRunning;
+  $("submit").textContent = busy ? "Submitting…" : editingRunning ? "Updating calculation…"
+    : operation === "compose" ? "Update figure →"
+    : operation === "render" ? "Update surface renders →"
+    : updateInPlace ? "Rerun this calculation →" : "Start calculation →";
+}
+
+function requiredToolsReady() {
+  return operation === "compose" || (operation === "render" ? pymolReady : toolsReady);
 }
 
 function setProteins(files) {
-  if (templateAbort) return;
+  if (templateAbort || operation !== "full") return;
   try {
     proteinSelection.addFiles(files);
     $("proteins").value = "";
@@ -85,7 +103,7 @@ function setProteins(files) {
 }
 
 async function addPdb() {
-  if (busy || fetching || templateAbort) return;
+  if (busy || fetching || templateAbort || operation !== "full") return;
   const pdbId = $("pdb-code").value.trim();
   if (!pdbId) { message("Enter a PDB ID, for example 3SQR.", true); return; }
   if (proteins.length >= 32) { message("Use at most 32 protein structures per comparison.", true); return; }
@@ -129,7 +147,7 @@ function renderProteins() {
   proteins.forEach((protein, index) => {
     const row = node("div", undefined, "protein-item");
     const name = protein.file ? protein.file.name
-      : protein.savedProteinId ? `${protein.filename} · saved input` : `${protein.pdbId} · RCSB PDB`;
+      : protein.savedProteinId ? `${protein.filename} · ${operation === "full" ? "saved input" : "saved artifacts"}` : `${protein.pdbId} · RCSB PDB`;
     const filename = node("span", `${index + 1}. ${name}`, "filename");
     filename.title = name;
     const label = node("input");
@@ -189,7 +207,7 @@ function updateCount() {
   }
   const cells = proteins.length * count;
   $("calculation-count").textContent = cells
-    ? `${proteins.length} protein${proteins.length === 1 ? "" : "s"} × ${count} pH value${count === 1 ? "" : "s"} = ${cells} calculations`
+    ? `${proteins.length} protein${proteins.length === 1 ? "" : "s"} × ${count} pH value${count === 1 ? "" : "s"} = ${cells} ${operation === "full" ? "calculations" : "saved cells"}`
     : "Choose proteins and valid pH values to preview your calculation.";
 }
 
@@ -198,6 +216,7 @@ function formData() {
   const inputs = proteinSelection.inputs();
   const settings = {
     name: $("run-name").value,
+    workers: Number($("workers").value),
     ph_mode: phMode(), ph_start: $("ph-start").value, ph_stop: $("ph-stop").value,
     ph_step: $("ph-step").value, ph_values: $("ph-values").value,
     labels: inputs.labels, structures: inputs.structures, size: Number($("size").value),
@@ -218,6 +237,8 @@ function formData() {
     ph_label_precision: $("ph-label-precision").value === ""
       ? null : Number($("ph-label-precision").value),
     source_run_id: templateSource,
+    operation, source_manifest_sha256: sourceManifest,
+    update_in_place: updateInPlace,
     reuse_view: reuseView && !$("view").files.length,
     reuse_ligand: reuseLigand && !$("ligand").files.length,
   };
@@ -230,12 +251,12 @@ function formData() {
 }
 
 async function send(validateOnly) {
-  if (!proteins.length || busy || fetching || templateAbort) return;
+  if (!proteins.length || busy || fetching || templateAbort || editingRunning) return;
   if (proteins.some((p) => p.file && !/\.(pdb|cif|mmcif)$/i.test(p.file.name))) {
     message("All protein structures must be .pdb, .cif or .mmcif files.", true);
     return;
   }
-  if (!validateOnly && !toolsReady) {
+  if (!validateOnly && !requiredToolsReady()) {
     message("Resolve the missing calculation tools before starting a run.", true);
     return;
   }
@@ -243,13 +264,25 @@ async function send(validateOnly) {
   updateButtons();
   message("");
   try {
+    const data = formData();
+    if (operation !== "full" && !validateOnly) {
+      const plan = await api("/api/validate", { method: "POST", body: data });
+      showPlan(plan);
+      if (!updateInPlace && !window.confirm(`Reuse: ${plan.reuse.join(", ")}\nRun: ${plan.run.join(" → ")}\nCells: ${plan.total}\n\nCreate a separate copy?`)) return;
+    }
     const result = await api(validateOnly ? "/api/validate" : "/api/runs", {
-      method: "POST", body: formData(),
+      method: "POST", body: data,
     });
     if (validateOnly) {
-      message(`Inputs are valid. ${result.total} calculations at pH ${result.ph_values.join(", ")}.`);
+      if (operation !== "full") showPlan(result);
+      message(`Inputs are valid. ${result.total} cells at pH ${result.ph_values.join(", ")}. Up to ${result.execution?.effective_workers || 1} cells in parallel.`);
     } else {
-      message("Calculation queued. You can prepare another while this one runs.");
+      templateSource = result.run_id;
+      updateInPlace = true;
+      sourceManifest = null;
+      editingRunning = true;
+      syncSavedInputs();
+      message("Calculation queued. Further changes will update this calculation. New calculation starts a separate one.");
       await refreshHistory();
       await selectRun(result.run_id);
     }
@@ -268,6 +301,7 @@ async function checkTools() {
   try {
     const data = await api("/api/doctor");
     toolsReady = data.ready;
+    pymolReady = data.checks.some((check) => check.name === "PyMOL" && check.ok);
     $("toolchain-title").textContent = data.ready ? "Calculation tools are ready" : "Some calculation tools need attention";
     $("toolchain-dot").className = data.ready ? "status-dot" : "status-dot failed";
     const chips = data.checks.map((check) => {
@@ -279,6 +313,7 @@ async function checkTools() {
     $("toolchain-checks").replaceChildren(...chips);
   } catch (error) {
     toolsReady = false;
+    pymolReady = false;
     $("toolchain-title").textContent = error.message;
     $("toolchain-dot").className = "status-dot failed";
   } finally {
@@ -310,15 +345,31 @@ async function refreshHistory() {
   }
 }
 
-function artifactUrl(runId, path, download = false) {
-  return `/api/runs/${encodeURIComponent(runId)}/files/${path.split("/").map(encodeURIComponent).join("/")}${download ? "?download=true" : ""}`;
+function artifactUrl(runId, path, download = false, revision = null) {
+  const query = new URLSearchParams();
+  if (download) query.set("download", "true");
+  if (revision) query.set("v", revision);
+  const queryText = query.toString();
+  return `/api/runs/${encodeURIComponent(runId)}/files/${path.split("/").map(encodeURIComponent).join("/")}${queryText ? `?${queryText}` : ""}`;
+}
+
+function reconcileEditingSession(run) {
+  if (templateSource === run.run_id && updateInPlace) {
+    editingRunning = !terminal.has(run.status);
+    if (run.manifest_sha256) sourceManifest = run.manifest_sha256;
+  }
 }
 
 function renderRun(run) {
   if (selected !== run.run_id) return;
   selectedStatus = run.status;
   selectedCanTemplate = Boolean(run.can_template);
+  selectedCanRework = Boolean(run.can_rework);
+  reconcileEditingSession(run);
+  $("edit-figure").hidden = !terminal.has(run.status);
+  $("rerender").hidden = !terminal.has(run.status);
   $("use-template").hidden = !terminal.has(run.status);
+  $("edit-calculation").hidden = !terminal.has(run.status);
   $("use-template").title = selectedCanTemplate
     ? "Load saved settings and inputs into a new calculation"
     : "This older job has no saved setup available to restore";
@@ -327,16 +378,21 @@ function renderRun(run) {
   $("run-detail").hidden = false;
   $("run-title").textContent = run.name || run.run_id;
   $("run-origin").textContent = run.source === "cli" ? "COMMAND-LINE CALCULATION" : "LOCAL CALCULATION";
+  if (run.plan) $("run-origin").textContent = run.plan.operation === "compose" ? "EDITED FIGURE" : "RE-RENDERED SURFACES";
+  $("run-plan").hidden = !run.plan;
+  $("run-plan").textContent = run.plan
+    ? `Source: ${run.plan.source_run_id}\nReuse: ${run.plan.reuse.join(", ")}\nRun: ${run.plan.run.join(" → ")}` : "";
   $("run-time").textContent = `${formatDate(run.created_at)} · ${run.run_id}`;
   $("run-status").textContent = run.status;
   $("run-status").className = `status-badge ${run.status}`;
   $("run-progress").value = run.progress;
-  $("progress-label").textContent = `${run.completed} / ${run.total} calculations complete`;
+  $("progress-label").textContent = `${run.completed} / ${run.total} cells complete`;
   $("cancel").hidden = !run.can_cancel;
   $("cancel").disabled = run.status === "cancelling";
-  const active = run.cells.find((cell) => cell.status === "running");
+  const activeCells = run.cells.filter((cell) => cell.status === "running");
+  const active = activeCells[0];
   $("active-stage").textContent = active
-    ? `${active.protein} · pH ${active.ph} · ${stageNames[active.stage] || "Starting calculation"}`
+    ? `${activeCells.length} active cell${activeCells.length === 1 ? "" : "s"} · ${active.protein} · pH ${active.ph} · ${stageNames[active.stage] || "Starting calculation"}`
     : run.status === "queued" ? "Waiting for the previous calculation to finish."
     : run.status === "running" ? "Checking tools or composing the final figure…"
     : run.status === "completed" ? "All surfaces rendered. Your map is ready."
@@ -345,28 +401,29 @@ function renderRun(run) {
   $("run-error").textContent = run.error || "";
   $("figure-panel").hidden = !run.figure;
   if (run.figure) {
-    const url = artifactUrl(run.run_id, run.figure);
+    const url = artifactUrl(run.run_id, run.figure, false, run.figure_revision);
     if ($("figure").getAttribute("src") !== url) $("figure").src = url;
-    $("download-figure").href = artifactUrl(run.run_id, run.figure, true);
+    $("download-figure").href = artifactUrl(run.run_id, run.figure, true, run.figure_revision);
     $("full-figure").href = url;
   } else {
     $("figure").removeAttribute("src");
   }
   const rows = run.cells.map((cell) => {
     const row = node("tr");
-    const charge = cell.stages.find((stage) => stage.metrics?.pqr)?.metrics.pqr.total_charge;
+    const charge = cell.metrics?.pqr?.total_charge
+      ?? cell.stages.find((stage) => stage.metrics?.pqr)?.metrics.pqr.total_charge;
     const state = cell.status === "running" ? stageNames[cell.stage] || "Starting" : cell.status;
-    row.append(node("td", cell.protein), node("td", cell.ph), node("td", state), node("td", charge === undefined ? "—" : charge.toFixed(2)));
+    row.append(node("td", cell.protein), node("td", cell.ph), node("td", state), node("td", typeof charge === "number" && Number.isFinite(charge) ? charge.toFixed(2) : "—"));
     return row;
   });
   $("cells").replaceChildren(...rows);
   $("tiles-details").hidden = !run.tiles.length;
-  const tileKey = run.tiles.join("|");
+  const tileKey = `${run.figure_revision || ""}|${run.tiles.join("|")}`;
   if ($("tiles").dataset.key !== `${run.run_id}|${tileKey}`) {
     $("tiles").dataset.key = `${run.run_id}|${tileKey}`;
     $("tiles").replaceChildren(...run.tiles.map((path) => {
       const link = node("a", undefined, "tile");
-      link.href = artifactUrl(run.run_id, path);
+      link.href = artifactUrl(run.run_id, path, false, run.figure_revision);
       link.target = "_blank";
       link.rel = "noopener";
       const caption = path.replace(/^renders\//, "").replace(/\.png$/, "").replace("/ph-", " · pH ");
@@ -425,8 +482,32 @@ function syncPhMode() {
 function syncSavedInputs() {
   $("template-notice").hidden = templateSource === null;
   $("template-source").textContent = templateSource || "";
+  $("template-action").textContent = updateInPlace ? "Editing calculation" : "Duplicating calculation";
+  $("template-behavior").textContent = updateInPlace
+    ? "Updates replace this calculation's current result after success. No previous versions are kept."
+    : "Starting creates a separate calculation.";
+  $("setup-title").textContent = updateInPlace ? "Edit this calculation" : "Set up a calculation";
+  $("done-editing").hidden = !updateInPlace;
   $("saved-view").hidden = !reuseView;
   $("saved-ligand").hidden = !reuseLigand;
+}
+
+function showPlan(plan) {
+  $("reuse-plan").hidden = false;
+  $("reuse-plan").textContent = `Reuse: ${plan.reuse.join(", ")}\nRun: ${plan.run.join(" → ")}\nParallel cells: ${plan.execution?.effective_workers || 1}\n${plan.total} saved cells. ${updateInPlace ? "Update this calculation after success; keep the last good result if it fails." : "Create a separate copy."}`;
+}
+
+function syncOperation() {
+  const reuse = operation !== "full", compose = operation === "compose";
+  ["force-field", "ligand", "clear-saved-ligand"].forEach((id) => { $(id).disabled = reuse; });
+  ["size", "level", "ramp", "ray", "surface-mode", "surface-solvent", "surface-ramp-above-mode",
+    "ligand-representation", "view", "clear-saved-view"].forEach((id) => { $(id).disabled = compose; });
+  $("reuse-plan").hidden = true;
+  $("operation-notice").hidden = !reuse;
+  $("operation-notice").textContent = compose
+    ? "Edit saved tiles: change labels, row/column order, font, spacing, DPI and legend visibility. Choose only saved pH values. Opaque tile backgrounds cannot be changed without re-rendering."
+    : "Re-render saved PQR/DX: change camera, colors, resolution and surface controls. Choose only saved proteins and pH values. Scientific inputs and force field stay fixed.";
+  updateButtons();
 }
 
 function applyTemplate(data) {
@@ -447,12 +528,17 @@ function applyTemplate(data) {
     input.checked = input.value === form.phMode;
   });
   templateSource = data.settings.source_run_id;
+  operation = data.settings.operation || "full";
+  sourceManifest = data.settings.source_manifest_sha256 || null;
+  updateInPlace = Boolean(data.settings.update_in_place);
+  editingRunning = false;
   reuseView = data.has_view;
   reuseLigand = data.has_ligand;
   proteinSelection.loadSaved(data.proteins);
   syncSavedInputs();
   syncPhMode();
   renderProteins();
+  syncOperation();
 }
 
 function cancelTemplateLoad() {
@@ -472,10 +558,31 @@ async function useTemplate() {
     const data = await api(`/api/runs/${encodeURIComponent(runId)}/template`, { signal: controller.signal });
     if (controller.signal.aborted || selected !== runId) return;
     applyTemplate(data);
-    message("Setup loaded. Change any settings, then Start calculation to create a separate new run.");
+    message("Setup loaded as a duplicate. Start calculation creates a separate history item.");
     $("run-name").scrollIntoView({ behavior: "smooth", block: "center" });
   } catch (error) {
     if (!controller.signal.aborted && selected === runId) message(error.message, true);
+  } finally {
+    if (templateAbort === controller) { templateAbort = null; updateButtons(); }
+  }
+}
+
+async function openEditor(mode) {
+  if (!selected || !(mode === "full" ? selectedCanTemplate : selectedCanRework) || busy || fetching || templateAbort) return;
+  const runId = selected;
+  const controller = new AbortController();
+  templateAbort = controller;
+  updateButtons();
+  try {
+    const url = mode === "full" ? `/api/runs/${encodeURIComponent(runId)}/template?edit=true`
+      : `/api/runs/${encodeURIComponent(runId)}/editor?operation=${mode}`;
+    const data = await api(url, { signal: controller.signal });
+    if (controller.signal.aborted || templateAbort !== controller || selected !== runId) return;
+    applyTemplate(data);
+    message("Editing this calculation. Adjust settings, update, and review again; the history item stays the same.");
+    $("run-name").scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch (error) {
+    if (!controller.signal.aborted && templateAbort === controller) message(error.message, true);
   } finally {
     if (templateAbort === controller) { templateAbort = null; updateButtons(); }
   }
@@ -508,6 +615,15 @@ $("validate").onclick = () => send(true);
 $("refresh-history").onclick = refreshHistory;
 $("recheck-tools").onclick = checkTools;
 $("use-template").onclick = useTemplate;
+$("done-editing").onclick = () => {
+  if (busy || editingRunning || templateAbort) return;
+  if (!window.confirm("Finish editing? Only changes applied with Update or Rerun are saved. Unsubmitted form changes will be discarded.")) return;
+  resetSetup();
+  message("Calculation saved. The latest result is shown here; use Edit calculation or Re-render whenever you want to refine it again.");
+};
+$("edit-calculation").onclick = () => openEditor("full");
+$("edit-figure").onclick = () => openEditor("compose");
+$("rerender").onclick = () => openEditor("render");
 $("clear-saved-view").onclick = () => { reuseView = false; syncSavedInputs(); };
 $("clear-saved-ligand").onclick = () => { reuseLigand = false; syncSavedInputs(); };
 $("view").addEventListener("change", () => { if ($("view").files.length) reuseView = false; syncSavedInputs(); });
@@ -523,21 +639,31 @@ $("cancel").onclick = async () => {
     refreshHistory();
   } catch (error) { message(error.message, true); $("cancel").disabled = false; }
 };
-$("new-run").onclick = () => {
+function resetSetup() {
   cancelPdbFetch();
   cancelTemplateLoad();
   $("run-form").reset();
   proteinSelection.loadSaved([]);
   templateSource = null;
+  operation = "full";
+  updateInPlace = false;
+  editingRunning = false;
+  sourceManifest = null;
+  syncOperation();
   reuseView = false;
   reuseLigand = false;
   syncSavedInputs();
   syncPhMode();
   renderProteins();
+}
+
+$("new-run").onclick = () => {
+  resetSetup();
   selection.close();
   selected = null;
   selectedStatus = null;
   selectedCanTemplate = false;
+  selectedCanRework = false;
   updateButtons();
   $("run-detail").hidden = true;
   $("empty-state").hidden = false;

@@ -57,14 +57,17 @@ class PyMOLRenderOptions:
     ligand_representation: LigandRepresentation | None = "sticks"
     view: tuple[float, ...] | None = None
     ray_trace: bool = True
+    max_threads: int | None = None
 
     def __post_init__(self) -> None:
+        if self.max_threads is not None and (
+            isinstance(self.max_threads, bool)
+            or not isinstance(self.max_threads, int)
+            or not 1 <= self.max_threads <= 32
+        ):
+            raise BackendValidationError("PyMOL max_threads must be an integer from 1 to 32")
         for name, value in (("width", self.width), ("height", self.height)):
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, int)
-                or not 1 <= value <= 16_384
-            ):
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 16_384:
                 raise BackendValidationError(f"PyMOL {name} must be between 1 and 16384")
         if (
             isinstance(self.dpi, bool)
@@ -72,11 +75,7 @@ class PyMOLRenderOptions:
             or not 1 <= self.dpi <= 4_800
         ):
             raise BackendValidationError("PyMOL dpi must be between 1 and 4800")
-        if (
-            isinstance(self.level, bool)
-            or not math.isfinite(self.level)
-            or self.level <= 0
-        ):
+        if isinstance(self.level, bool) or not math.isfinite(self.level) or self.level <= 0:
             raise BackendValidationError("PyMOL potential level must be positive")
         if len(self.ramp_colors) != 3:
             raise BackendValidationError("PyMOL ramp requires exactly three colors")
@@ -92,24 +91,17 @@ class PyMOLRenderOptions:
         for name in ("surface_solvent", "surface_ramp_above_mode"):
             if not isinstance(getattr(self, name), bool):
                 raise BackendValidationError(f"PyMOL {name} must be true or false")
-        if (
-            self.ligand_representation is not None
-            and (
-                not isinstance(self.ligand_representation, str)
-                or self.ligand_representation not in _LIGAND_REPRESENTATIONS
-            )
+        if self.ligand_representation is not None and (
+            not isinstance(self.ligand_representation, str)
+            or self.ligand_representation not in _LIGAND_REPRESENTATIONS
         ):
             raise BackendValidationError("Unsupported PyMOL ligand representation")
         if self.view is not None:
             if len(self.view) != 18:
-                raise BackendValidationError(
-                    "A PyMOL view matrix must contain exactly 18 numbers"
-                )
+                raise BackendValidationError("A PyMOL view matrix must contain exactly 18 numbers")
             for matrix_value in self.view:
                 if isinstance(matrix_value, bool) or not math.isfinite(matrix_value):
-                    raise BackendValidationError(
-                        "PyMOL view matrix values must all be finite"
-                    )
+                    raise BackendValidationError("PyMOL view matrix values must all be finite")
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +162,7 @@ def build_pymol_script(request: PyMOLRenderRequest) -> str:
 
     lines = [
         "reinitialize",
+        *([] if options.max_threads is None else [f"set max_threads, {options.max_threads}"]),
         f"load {_pml_string(request.dx_path.resolve())}, potential",
         f"load {_pml_string(request.pqr_path.resolve())}, molecule",
         "hide everything, all",
@@ -177,19 +170,14 @@ def build_pymol_script(request: PyMOLRenderRequest) -> str:
         f"set surface_mode, {options.surface_mode}",
         f"set surface_solvent, {int(options.surface_solvent)}",
         f"set surface_ramp_above_mode, {int(options.surface_ramp_above_mode)}",
-        (
-            "ramp_new electrostatic, potential, "
-            f"[{negative}, 0, {positive}], [{colors}]"
-        ),
+        (f"ramp_new electrostatic, potential, [{negative}, 0, {positive}], [{colors}]"),
         "set surface_color, electrostatic, molecule",
         # Retain the ramp as the surface color source but hide its on-canvas
         # legend; the compositor draws one shared, consistently sized legend.
         "disable electrostatic",
     ]
     if options.ligand_representation is not None:
-        lines.append(
-            f"show {options.ligand_representation}, molecule and hetatm"
-        )
+        lines.append(f"show {options.ligand_representation}, molecule and hetatm")
     if options.view is None:
         lines.extend(("orient molecule", "zoom molecule"))
     else:
@@ -271,9 +259,7 @@ class PyMOLBackend:
         require_nonempty_file(script_path, "PyMOL script")
         return PyMOLRenderArtifacts(png, script_path, result)
 
-    def version(
-        self, *, timeout: float = 10.0, cwd: str | Path | None = None
-    ) -> VersionInfo:
+    def version(self, *, timeout: float = 10.0, cwd: str | Path | None = None) -> VersionInfo:
         return self.runner.probe_version(self.executable, timeout=timeout, cwd=cwd)
 
 

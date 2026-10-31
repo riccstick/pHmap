@@ -10,6 +10,7 @@ from phmap.compose import MAX_FONT_SIZE, MAX_SPACING, format_ph_labels
 from phmap.configuration import WorkflowOptions
 from phmap.inputs import parse_ph_selection, validate_protein_names
 from phmap.models import InputValidationError, validate_protein_id
+from phmap.parallel import MAX_WORKERS, recommended_workers
 from phmap.structures import normalize_pdb_id
 
 
@@ -23,9 +24,17 @@ class StructureSelection(BaseModel):
 
     @model_validator(mode="after")
     def one_source(self) -> Self:
-        if sum(value is not None for value in (
-            self.upload_index, self.pdb_id, self.saved_protein_id,
-        )) != 1:
+        if (
+            sum(
+                value is not None
+                for value in (
+                    self.upload_index,
+                    self.pdb_id,
+                    self.saved_protein_id,
+                )
+            )
+            != 1
+        ):
             raise ValueError("Choose exactly one upload, PDB ID, or saved input per protein row")
         if self.pdb_id is not None:
             self.pdb_id = normalize_pdb_id(self.pdb_id)
@@ -73,15 +82,23 @@ class RunSettings(BaseModel):
     show_colorbar: bool = Field(default=True, strict=True)
     ph_label_precision: int | None = Field(default=None, ge=0, le=6, strict=True)
     source_run_id: str | None = Field(
-        default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+        default=None,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
     )
     reuse_view: bool = Field(default=False, strict=True)
     reuse_ligand: bool = Field(default=False, strict=True)
+    operation: Literal["full", "compose", "render"] = "full"
+    source_manifest_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    update_in_place: bool = Field(default=False, strict=True)
+    workers: int = Field(default_factory=recommended_workers, ge=1, le=MAX_WORKERS, strict=True)
 
     @model_validator(mode="after")
     def saved_inputs_have_a_source(self) -> Self:
         if self.source_run_id is None and (
-            self.reuse_view or self.reuse_ligand
+            self.operation != "full"
+            or self.update_in_place
+            or self.reuse_view
+            or self.reuse_ligand
             or any(row.saved_protein_id is not None for row in self.structures)
         ):
             raise ValueError("Reusing saved inputs requires a source run")
@@ -89,15 +106,27 @@ class RunSettings(BaseModel):
 
     def options(self, runs_dir: Path) -> WorkflowOptions:
         return WorkflowOptions(
-            runs_dir=runs_dir, size=self.size, dpi=self.dpi, potential_level=self.level,
-            ramp_colors=self.ramp_colors, background=self.background,
-            foreground=self.foreground, force_field=self.force_field, ray_trace=self.ray_trace,
-            surface_mode=self.surface_mode, surface_solvent=self.surface_solvent,
+            runs_dir=runs_dir,
+            size=self.size,
+            dpi=self.dpi,
+            potential_level=self.level,
+            ramp_colors=self.ramp_colors,
+            background=self.background,
+            foreground=self.foreground,
+            force_field=self.force_field,
+            ray_trace=self.ray_trace,
+            surface_mode=self.surface_mode,
+            surface_solvent=self.surface_solvent,
             surface_ramp_above_mode=self.surface_ramp_above_mode,
             ligand_representation=self.ligand_representation,
-            font_size=self.font_size, outer_margin=self.outer_margin,
-            column_gap=self.column_gap, row_gap=self.row_gap, label_gap=self.label_gap,
-            show_colorbar=self.show_colorbar, ph_label_precision=self.ph_label_precision,
+            font_size=self.font_size,
+            outer_margin=self.outer_margin,
+            column_gap=self.column_gap,
+            row_gap=self.row_gap,
+            label_gap=self.label_gap,
+            show_colorbar=self.show_colorbar,
+            ph_label_precision=self.ph_label_precision,
+            workers=self.workers,
         )
 
     def selected_rows(self, upload_count: int) -> list[StructureSelection]:
@@ -115,7 +144,8 @@ class RunSettings(BaseModel):
         values, _ = parse_ph_selection(
             ph_values=self.ph_values if self.ph_mode == "explicit" else None,
             ph_range=(self.ph_start, self.ph_stop, self.ph_step)
-            if self.ph_mode == "range" else None,
+            if self.ph_mode == "range"
+            else None,
         )
         if len(values) * len(rows) > 512:
             raise InputValidationError("Use at most 512 calculation cells per GUI run")

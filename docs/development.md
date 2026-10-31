@@ -149,7 +149,70 @@ The compositor uses Pillow's bundled default font, measures actual text bounds,
 expands cells/legend space when necessary, and composites one tile at a time.
 It rejects inconsistent/non-PNG tiles and figures above 100 million pixels
 before allocating the canvas. The final PNG retains the selected DPI metadata.
-Saved-run editing and additional font choices are follow-up work.
+Additional font choices remain follow-up work. Saved-run editing is implemented
+by `saved_runs.SavedRun`: `compose` verifies/copies PNG tiles and runs only the
+Python compositor; `render` verifies/copies PQR/DX and executes only PyMOL plus
+composition. Expected per-cell paths are rebound inside the source directory,
+never to original/external paths. Hashes are checked at preflight and while
+copying; queued CLI workers pin the source manifest digest and verify again.
+No archived scripts/argv are executed. Presentation-only options preserve tile
+render metadata (including transparent backgrounds), preventing later edits
+from mistaking the figure background for a baked-in tile background.
+
+`gui.jobs.submit_saved` uses the same serial subprocess queue, progress and
+cancellation as full runs. GUI validation previews a stage plan. GUI edits refine
+the existing calculation; duplication is explicit. `run_updates.RunUpdate` holds
+a per-calculation lock and owns a marked `.phmap-updates/<id>/` transaction with
+private worker output. Successful updates preserve applicable verified raw and
+scientific artifacts, relocate manifest artifact pointers, and replace the run
+directory using journaled renames. Prior outputs are discarded, not versioned.
+Cancellation/failure leaves the old run untouched. Startup recovers abandoned
+transactions; a completed install with interrupted cleanup is finalized instead
+of rolled back. Exact executed argv are retained as provenance, never replayed.
+
+Queue records overlay pending configuration/progress on the existing history ID;
+downloads keep showing the last good result until commit. Completion is exposed
+only after transaction cleanup and lock release. Manifest digests and preview
+revision URLs refresh so repeated updates do not use stale settings/images.
+CLI `compose`/`render --in-place` share the same replacement primitive; omission
+retains explicit derivative behavior. Selecting saved rows/pH columns is explicit; automatic failed-stage
+resume and stage-specific APBS recovery remain future work.
+
+## Cell-level parallel execution
+
+`parallel.run_cells` uses a bounded `ThreadPoolExecutor` to orchestrate separate
+scientific subprocesses, not to run CPU-heavy Python calculations. The full
+workflow and saved-artifact renderer share this scheduler. Each protein/pH
+cell owns its working directory, logs, artifacts and runner; stages within a
+cell remain sequential. Results retain input order. Composition stays serial
+to preserve the compositor's bounded tile-loading behavior.
+
+`WorkflowOptions.workers` validates 1–32 workers. Effective concurrency is the
+minimum of the requested budget, available logical CPUs/affinity, and cell
+count. The CLI defaults to 1; `auto` and the GUI recommend at most 2 because
+concurrent APBS instances multiply memory demand. This policy does not reserve
+cores or estimate APBS memory. `configuration.execution` records requested and
+effective concurrency separately from rendering compatibility settings.
+
+Only parallel executions apply child-local OpenMP/BLAS/Accelerate thread
+limits and emit PyMOL `set max_threads, 1`. `CommandRunner` merges environment
+overrides into a copy, never mutating the parent environment. Single-worker
+execution preserves existing backend threading behavior. The PyMOL setting is
+defined in its [upstream setting registry](https://github.com/schrodinger/pymol-open-source/blob/master/layer1/SettingInfo.h).
+
+`RunManifest` predeclares ordered tasks and serializes mutations/writes with a
+reentrant lock. On failure the scheduler stops submission, signals sibling
+cells to stop between stages, drains running commands, and propagates the
+original exception. No tool continues after an in-place update is discarded
+or committed. GUI cancellation keeps the existing process-group/tree policy
+and terminates all parallel children together.
+
+Regression tests use barriers to prove overlap, check deterministic ordering
+and isolated files, stress concurrent manifest writes, preserve original
+failures, and exercise saved rendering, worker arguments, GUI restoration,
+and cancellation. A native four-pH smoke run and an in-place parallel re-render
+have also been verified locally on Apple Silicon; this does not establish
+native parallel verification on other target platforms.
 
 ## GUI development
 
@@ -199,6 +262,7 @@ node tests/frontend/run-selection.mjs
 node tests/frontend/protein-selection.mjs
 node tests/frontend/render-settings.mjs
 node tests/frontend/template-settings.mjs
+node tests/frontend/saved-runs.mjs
 node tests/frontend/request-races.mjs
 ```
 
@@ -216,8 +280,9 @@ input checksums before queueing, permitting templates of unstarted cancelled job
 Execution manifests take precedence over submission snapshots; damaged manifests
 do not silently fall back to another source. All input reads are confined to the
 run's saved input folder (or its private queued-input folder), with hashes checked
-again during bounded staging copies. Reruns use new workspaces and record the
-source metadata hash in `based_on`. They never reuse calculated artifacts.
+again during bounded staging copies. Full recalculation uses a private workspace
+and never reuses calculated artifacts. **Edit calculation** commits it into the
+same ID; **Duplicate calculation** creates a new ID and records `based_on`.
 
 `JobManager` runs a single isolated `python -m phmap run` worker at a time. It
 keeps queue metadata and uploaded input copies below `runs/.gui/`. Each worker

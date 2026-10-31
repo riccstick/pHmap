@@ -23,25 +23,36 @@ from phmap.inputs import (
     validate_structure_files,
 )
 from phmap.models import InputValidationError, RunInputs, structure_format
+from phmap.parallel import recommended_workers
+from phmap.saved_runs import SavedRun
 from phmap.structures import fetch_structure, normalize_pdb_id, structure_source
 from phmap.workflow import LocalWorkflow
 
 
 def _add_input_arguments(parser: argparse.ArgumentParser, *, include_run: bool) -> None:
     parser.add_argument(
-        "pdb", nargs="*", type=Path, metavar="STRUCTURE",
+        "pdb",
+        nargs="*",
+        type=Path,
+        metavar="STRUCTURE",
         help="local .pdb, .cif, or .mmcif structures; appended after any --pdb-id entries",
     )
     parser.add_argument(
-        "--pdb-id", action="append", default=[], metavar="CODE",
+        "--pdb-id",
+        action="append",
+        default=[],
+        metavar="CODE",
         help="fetch an RCSB PDB entry as mmCIF, e.g. 3SQR; repeat for multiple entries",
     )
     parser.add_argument(
-        "--structure-cache-dir", type=Path, default=Path("runs/.structures"),
+        "--structure-cache-dir",
+        type=Path,
+        default=Path("runs/.structures"),
         help="cache for downloaded structures (default: runs/.structures)",
     )
     parser.add_argument(
-        "--refresh-structures", action="store_true",
+        "--refresh-structures",
+        action="store_true",
         help="download fresh copies of --pdb-id entries instead of reusing verified cached files",
     )
     selection = parser.add_mutually_exclusive_group(required=True)
@@ -84,59 +95,97 @@ def _add_input_arguments(parser: argparse.ArgumentParser, *, include_run: bool) 
         ),
     )
     if include_run:
-        parser.add_argument("--runs-dir", type=Path, default=Path("runs"))
-        parser.add_argument("--size", type=int, default=500, help="square tile size")
-        parser.add_argument("--dpi", type=int, default=300)
-        parser.add_argument("--level", type=float, default=5.0, help="symmetric potential limit")
-        parser.add_argument(
-            "--ramp-colors",
-            nargs=3,
-            default=("red", "white", "blue"),
-            metavar=("NEGATIVE", "NEUTRAL", "POSITIVE"),
-        )
-        parser.add_argument(
-            "--background",
-            help="opaque PyMOL/composition background; omit for transparency",
-        )
-        parser.add_argument("--foreground", default="black", help="label and border color")
-        parser.add_argument("--font-size", type=int, default=22, help="figure label size, 1–256 px")
-        parser.add_argument("--outer-margin", type=int, default=24, help="outer figure margin, px")
-        parser.add_argument("--column-gap", type=int, default=16, help="gap between pH columns, px")
-        parser.add_argument("--row-gap", type=int, default=16, help="gap between protein rows, px")
-        parser.add_argument(
-            "--label-gap", type=int, default=16, help="gap between labels and grid, px",
-        )
-        parser.add_argument(
-            "--legend", dest="show_colorbar", action=argparse.BooleanOptionalAction, default=True,
-            help="show the shared potential legend (default: enabled)",
-        )
-        parser.add_argument(
-            "--ph-label-precision", type=int, default=None, metavar="DIGITS",
-            help="display 0–6 pH decimal places; omit to preserve input precision (display only)",
-        )
-        parser.add_argument("--force-field", default="PARSE")
-        parser.add_argument("--timeout", type=float, default=1800.0, metavar="SECONDS")
-        parser.add_argument("--no-ray", action="store_true", help="disable PyMOL ray tracing")
-        parser.add_argument(
-            "--surface-mode", type=int, choices=range(5), default=0,
-            help="PyMOL atom inclusion mode, 0–4 (default: 0, respect atom flags)",
-        )
-        parser.add_argument(
-            "--surface-solvent", action=argparse.BooleanOptionalAction, default=False,
-            help="show the solvent-accessible surface instead of solvent-excluded",
-        )
-        parser.add_argument(
-            "--surface-ramp-above-mode", action=argparse.BooleanOptionalAction, default=True,
-            help="sample potential above the surface (default: enabled)",
-        )
-        parser.add_argument(
-            "--ligand-representation", choices=("sticks", "lines", "dots", "spheres", "none"),
-            default="sticks",
-            help="display retained HETATM atoms; none hides the extra representation",
-        )
-        parser.add_argument("--pdb2pqr-executable", default="pdb2pqr30")
-        parser.add_argument("--apbs-executable", default="apbs")
-        parser.add_argument("--pymol-executable", default="pymol")
+        _add_workflow_arguments(parser)
+
+
+def _add_workflow_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--workers",
+        type=_worker_count,
+        default=1,
+        metavar="N|auto",
+        help="parallel protein/pH cells (1–32); auto selects up to 2 for RAM safety",
+    )
+    parser.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    parser.add_argument("--size", type=int, default=500, help="square tile size")
+    parser.add_argument("--dpi", type=int, default=300)
+    parser.add_argument("--level", type=float, default=5.0, help="symmetric potential limit")
+    parser.add_argument(
+        "--ramp-colors",
+        nargs=3,
+        default=("red", "white", "blue"),
+        metavar=("NEGATIVE", "NEUTRAL", "POSITIVE"),
+    )
+    parser.add_argument(
+        "--background",
+        help="opaque PyMOL/composition background; omit for transparency",
+    )
+    parser.add_argument("--foreground", default="black", help="label and border color")
+    parser.add_argument("--font-size", type=int, default=22, help="figure label size, 1–256 px")
+    parser.add_argument("--outer-margin", type=int, default=24, help="outer figure margin, px")
+    parser.add_argument("--column-gap", type=int, default=16, help="gap between pH columns, px")
+    parser.add_argument("--row-gap", type=int, default=16, help="gap between protein rows, px")
+    parser.add_argument(
+        "--label-gap",
+        type=int,
+        default=16,
+        help="gap between labels and grid, px",
+    )
+    parser.add_argument(
+        "--legend",
+        dest="show_colorbar",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="show the shared potential legend (default: enabled)",
+    )
+    parser.add_argument(
+        "--ph-label-precision",
+        type=int,
+        default=None,
+        metavar="DIGITS",
+        help="display 0–6 pH decimal places; omit to preserve input precision (display only)",
+    )
+    parser.add_argument("--force-field", default="PARSE")
+    parser.add_argument("--timeout", type=float, default=1800.0, metavar="SECONDS")
+    parser.add_argument("--no-ray", action="store_true", help="disable PyMOL ray tracing")
+    parser.add_argument("--ray", dest="no_ray", action="store_false", help="enable ray tracing")
+    parser.add_argument(
+        "--surface-mode",
+        type=int,
+        choices=range(5),
+        default=0,
+        help="PyMOL atom inclusion mode, 0–4 (default: 0, respect atom flags)",
+    )
+    parser.add_argument(
+        "--surface-solvent",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="show the solvent-accessible surface instead of solvent-excluded",
+    )
+    parser.add_argument(
+        "--surface-ramp-above-mode",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="sample potential above the surface (default: enabled)",
+    )
+    parser.add_argument(
+        "--ligand-representation",
+        choices=("sticks", "lines", "dots", "spheres", "none"),
+        default="sticks",
+        help="display retained HETATM atoms; none hides the extra representation",
+    )
+    parser.add_argument("--pdb2pqr-executable", default="pdb2pqr30")
+    parser.add_argument("--apbs-executable", default="apbs")
+    parser.add_argument("--pymol-executable", default="pymol")
+
+
+def _worker_count(value: str) -> int:
+    if value.lower() == "auto":
+        return recommended_workers()
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Choose an integer worker count or auto") from exc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -162,6 +211,40 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="run PDB2PQR, APBS, PyMOL, and composition")
     _add_input_arguments(run, include_run=True)
+    for command, description in (
+        ("compose", "edit a figure using verified saved PNG tiles; no scientific tools"),
+        ("render", "rerender verified saved PQR/DX artifacts; run only PyMOL and composition"),
+    ):
+        saved = commands.add_parser(command, help=description)
+        saved.add_argument("source", type=Path, help="source run directory")
+        _add_workflow_arguments(saved)
+        # Saved-run settings inherit from the source unless explicitly overridden.
+        for action in saved._actions:
+            if action.option_strings and action.dest != "help":
+                action.default = argparse.SUPPRESS
+        saved.add_argument("--output-dir", type=Path)
+        saved.add_argument(
+            "--in-place",
+            action="store_true",
+            help="update this calculation after success, without retaining old versions",
+        )
+        saved.add_argument("--protein-id", action="append", help="select/reorder saved rows")
+        saved.add_argument("--label", action="append", help="replacement label per selected row")
+        saved.add_argument(
+            "--ph", dest="ph_values", action="append", help="select/reorder saved columns"
+        )
+        saved.add_argument("--view", type=Path, help="replace the saved camera (render only)")
+        saved.add_argument("--auto-view", action="store_true", help="clear the saved camera")
+        saved.add_argument(
+            "--transparent", action="store_true", help="use a transparent background"
+        )
+        saved.add_argument(
+            "--preserve-ph-labels", action="store_true", help="reset pH label precision"
+        )
+        saved.add_argument(
+            "--plan", action="store_true", help="verify artifacts and print JSON plan only"
+        )
+        saved.add_argument("--source-manifest-sha256", help=argparse.SUPPRESS)
     gui = commands.add_parser("gui", help="open the local browser interface")
     gui.add_argument("--runs-dir", type=Path, default=Path("runs"))
     gui.add_argument("--port", type=int, default=8765)
@@ -176,7 +259,9 @@ def _inputs_from_args(args: argparse.Namespace) -> RunInputs:
     parse_ph_selection(ph_values=args.ph_values, ph_range=args.ph_range)
     pdb_ids = [normalize_pdb_id(pdb_id) for pdb_id in args.pdb_id]
     validate_protein_names(
-        len(pdb_ids) + len(args.pdb), protein_ids=args.protein_id, labels=args.label,
+        len(pdb_ids) + len(args.pdb),
+        protein_ids=args.protein_id,
+        labels=args.label,
     )
     local_paths = validate_structure_files(args.pdb)
     if args.view is not None:
@@ -249,31 +334,36 @@ def _validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _options_from_args(
+    args: argparse.Namespace, base: WorkflowOptions | None = None
+) -> WorkflowOptions:
+    from dataclasses import fields, replace
+
+    mapping = {"level": "potential_level", "no_ray": "ray_trace"}
+    names = {item.name for item in fields(WorkflowOptions)}
+    values = {}
+    for key, value in vars(args).items():
+        target = mapping.get(key, key)
+        if target not in names:
+            continue
+        if key == "no_ray":
+            value = not value
+        elif key == "ramp_colors":
+            value = tuple(value)
+        elif key == "ligand_representation" and value == "none":
+            value = None
+        values[target] = value
+    if getattr(args, "transparent", False):
+        if "background" in vars(args):
+            raise InputValidationError("Choose --background or --transparent, not both")
+        values["background"] = None
+    if getattr(args, "preserve_ph_labels", False):
+        values["ph_label_precision"] = None
+    return replace(base or WorkflowOptions(), **values)
+
+
 def _run(args: argparse.Namespace) -> int:
-    options = WorkflowOptions(
-        output_dir=args.output_dir,
-        runs_dir=args.runs_dir,
-        size=args.size,
-        dpi=args.dpi,
-        potential_level=args.level,
-        ramp_colors=tuple(args.ramp_colors),
-        background=args.background,
-        foreground=args.foreground,
-        force_field=args.force_field,
-        timeout=args.timeout,
-        ray_trace=not args.no_ray,
-        surface_mode=args.surface_mode,
-        surface_solvent=args.surface_solvent,
-        surface_ramp_above_mode=args.surface_ramp_above_mode,
-        ligand_representation=None if args.ligand_representation == "none"
-        else args.ligand_representation,
-        pdb2pqr_executable=args.pdb2pqr_executable,
-        apbs_executable=args.apbs_executable,
-        pymol_executable=args.pymol_executable,
-        font_size=args.font_size, outer_margin=args.outer_margin,
-        column_gap=args.column_gap, row_gap=args.row_gap, label_gap=args.label_gap,
-        show_colorbar=args.show_colorbar, ph_label_precision=args.ph_label_precision,
-    )
+    options = _options_from_args(args)
     values, _ = parse_ph_selection(ph_values=args.ph_values, ph_range=args.ph_range)
     format_ph_labels(values, options.ph_label_precision)
     inputs = _inputs_from_args(args)
@@ -281,6 +371,30 @@ def _run(args: argparse.Namespace) -> int:
     print(f"Run completed: {result.workspace.root}")
     print(f"Figure: {result.figure}")
     print(f"Manifest: {result.manifest}")
+    return 0
+
+
+def _saved_run(args: argparse.Namespace) -> int:
+    if args.in_place and (args.output_dir is not None or "runs_dir" in vars(args)):
+        raise InputValidationError("--in-place cannot be combined with an output destination")
+    source = SavedRun(args.source, expected_manifest=args.source_manifest_sha256)
+    if args.view is not None and args.auto_view:
+        raise InputValidationError("Choose --view or --auto-view, not both")
+    workflow = source.prepare(
+        args.command,
+        _options_from_args(args, source.options),
+        protein_ids=args.protein_id,
+        labels=args.label,
+        ph_values=args.ph_values,
+        view=None if args.view is None else load_pymol_view(args.view),
+        use_saved_view=not args.auto_view,
+    )
+    print(json.dumps(workflow.plan(), indent=2))
+    if not args.plan:
+        result = workflow.run_in_place() if args.in_place else workflow.run()
+        print(f"Run completed: {result.workspace.root}")
+        print(f"Figure: {result.figure}")
+        print(f"Manifest: {result.manifest}")
     return 0
 
 
@@ -296,6 +410,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _validate(args)
         if args.command == "run":
             return _run(args)
+        if args.command in {"compose", "render"}:
+            return _saved_run(args)
         if args.command == "gui":
             from phmap.gui.app import serve
 
@@ -308,6 +424,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (InputValidationError, PHMapError, ScientificBackendError) as exc:
         print(f"phmap: error: {exc}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        print("phmap: calculation cancelled", file=sys.stderr)
+        return 130
     except Exception as exc:
         if args.debug:
             raise
