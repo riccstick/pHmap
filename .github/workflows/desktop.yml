@@ -64,6 +64,14 @@ jobs:
         if: needs.changes.outputs.docs_only != 'true'
         with:
           persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: needs.changes.outputs.docs_only != 'true'
+        with:
+          node-version: '26'
+          cache: npm
+      - name: Install full-page DOM test dependencies
+        if: needs.changes.outputs.docs_only != 'true'
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Prepare Linux graphical test display
         if: needs.changes.outputs.docs_only != 'true' && runner.os == 'Linux'
         run: |

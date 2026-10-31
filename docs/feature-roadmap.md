@@ -2,11 +2,12 @@
 
 The Python app already replaces the core local calculation workflow, but it
 does not yet replace every feature of the Bash program. The most important
-remaining capabilities are activity plots, editing figures without repeating
-calculations, advanced surface controls, and publication styling.
+remaining capabilities include activity plots, additional font/axis styling,
+and automatic recovery of failed scientific stages. Basic publication styling,
+saved-run figure editing and re-rendering are implemented.
 
 The legacy audit dates from 8 October 2026; available features were updated
-on 21 October 2026. Priorities below are proposed
+on 31 October 2026. Priorities below are proposed
 implementation order, not committed release dates. The legacy executable code
 was removed on that date after this feature audit. Missing and partial features
 remain deferred Python work; their removal from the old implementation does not
@@ -35,6 +36,28 @@ launcher and native GitHub Actions build matrix are implemented. Configuring
 the matrix does not establish that every platform has passed; public signing
 and notarization remain separate release work.
 
+The GUI also has per-user standard settings, optional first-launch setup with
+persistent skip, and a three-step **Proteins / pH / Review** wizard. Rendering,
+publication, force-field and worker defaults are reused across new calculations;
+per-run overrides and saved-session settings stay separate. CLI settings remain
+explicit. See [standard settings](tutorial.md#configure-standard-settings-once).
+
+## Parallel calculation and rendering
+
+Implemented in both interfaces: **Parallel cells** / `--workers` bounds concurrent
+protein/pH cells in full calculations and saved-artifact re-rendering. Each cell
+keeps its own files and runs its scientific stages in order. Manifest writes are
+synchronized, and the final figure retains requested row/column order.
+
+The GUI defaults to up to two workers; the CLI remains sequential unless a count
+or `auto` is requested. Execution caps the count by available CPUs and cells,
+limits common backend threading when running cells in parallel, and records
+the policy in the manifest. Composition and the GUI's top-level calculation
+queue remain serial. Tests verify overlap, ordering, error handling and saved
+settings. Native parallel calculation/re-rendering have been checked locally
+on Apple Silicon, not yet on every desktop target. See the
+[parallel execution tutorial](tutorial.md#run-calculations-and-rendering-in-parallel).
+
 ## Legacy feature mapping
 
 Here, **available** means exposed through the current application, **partial**
@@ -54,8 +77,8 @@ forms; the table groups both forms together.
 | `--activity_radius`, `--activity_lollipop_circle_color`, `--activity_lollipop_circle_stroke` | Missing | Control activity marker size, fill, and outline. |
 | `--activity_lollipopbar_color`, `--activity_lollipop_errorbar_color` | Missing | Style stems and error bars separately. |
 | `--grid_linewidth`, `--grid_place`, `--grid_font_size` | Missing | Control activity ticks, inward or outward placement, and scale labels. |
-| `--update_axis` | Missing | Recompose saved tiles without PDB2PQR, APBS, or PyMOL. |
-| `--update_rendering` | Missing | Render saved PQR and DX artifacts again without PDB2PQR or APBS. |
+| `--update_axis` | Available | Use `phmap compose RUN_DIR` / **Edit figure** to recompose verified tiles without scientific tools. |
+| `--update_rendering` | Available | Use `phmap render RUN_DIR` / **Re-render** with verified PQR/DX; no PDB2PQR or APBS runs. |
 | `--pymol_surface_mode`, `--pymol_surface_solvent`, `--pymol_surface_above_mode` | Available | Use `--surface-mode`, `--surface-solvent`, and `--surface-ramp-above-mode`; also exposed in the GUI and saved in manifests. |
 | `--pymol_ligand_representation` | Available | Use `--ligand-representation sticks\|lines\|dots\|spheres\|none` or the GUI selector. |
 | `--pymol_ramp` | Available | Use `--legend` / `--no-legend` or the GUI checkbox for the shared legend. |
@@ -122,8 +145,8 @@ and manifest configuration. Desktop CI runs `pixi run --locked smoke-rendering`
 against native APBS/PyMOL using protein-only and ligand-bearing prepared PQR
 inputs. The synthetic fixture validates rendering, not ligand parameterization.
 
-All settings are recorded in `configuration.render`; future render reuse must
-include them in its compatibility decisions. Shared MOL2 input remains
+All settings are recorded in `configuration.render`; saved-tile reuse checks
+them for compatibility, while re-rendering always generates fresh tiles. Shared MOL2 input remains
 experimental: the legacy FAD example fails in PDB2PQR 3.7.1's parameter assignment.
 See the [rendering tutorial](tutorial.md#advanced-surface-and-ligand-rendering).
 
@@ -140,9 +163,12 @@ The compositor measures text/legend space, preserves tile pixels, streams tile
 composition, and writes final PNG DPI metadata. Tests cover layout/order,
 transparency, legend colors, invalid settings/tiles, and duplicate display labels.
 
-Remaining work: saved-run figure editing, font selection and variants, label
-alignment, optional axis lines, and activity tick styling. No editing action
-or automatic scientific/render reuse is implemented by the first milestone.
+Saved-run editing is now implemented: **Edit figure** / `phmap compose RUN_DIR`
+verify saved tiles and update the current calculation with new labels,
+order/subsets, spacing, font size, DPI and legend visibility. No scientific
+executable runs. Transparent tiles permit new figure backgrounds; opaque tile
+backgrounds and potential colors/limits require re-rendering to remain honest.
+Remaining work: font selection/variants, alignment, axis lines and activity ticks.
 
 Acceptance criteria:
 
@@ -152,8 +178,9 @@ Acceptance criteria:
   Reject or warn about distinct pH columns that become identical labels.
 - An edit action composes a new figure from verified saved tiles and new
   labels/activity settings without launching any scientific executable.
-- Output is a new run or explicitly versioned derivative linked to its source;
-  the original figure and provenance remain intact.
+- GUI updates keep the same calculation/history ID, replacing previous outputs
+  only after success. Failed/cancelled work retains the last good result. Keep
+  applicable raw/scientific artifacts for successive edits; duplication is explicit.
 - Tests verify cell order, label placement, transparency, legend consistency,
   invalid fonts/colors, and missing or incompatible tiles.
 
@@ -162,15 +189,20 @@ controls, and approve visual changes independently from scientific changes.
 
 ## Render reuse and selective reruns
 
-Priority: high after the figure editing foundation. Users should be able to
+Implemented explicit compose/render/full operations. Users can
 change camera, surface representation, colors, or resolution without rerunning
 protonation and electrostatics. Legacy `--update_rendering` supplied this
 capability, but relied on files already present in the working directory.
 
-Proposed implementation: an explicit source-run input with separate compose,
-render, and full-calculation operations. Add resume of failed or interrupted
-cells only after artifact verification and stage reuse are reliable; automatic
-resume was not a legacy feature.
+**Edit figure** / `phmap compose` reuse PNG tiles; **Re-render** / `phmap render`
+reuse PQR/DX; **Edit calculation** starts a full recalculation. Both reuse actions
+support selecting/reordering existing proteins and pH columns, verify hashes
+and compatibility, and refine one current calculation without version history.
+The GUI previews the stage plan, queues/cancels the same CLI worker
+workflow, and exposes clear errors for missing or incompatible artifacts.
+Completed scientific cells from failed/interrupted runs can be re-rendered;
+only complete tiles can be composed. There is no automatic failed-stage resume
+or APBS-from-PQR recovery yet. See the [tutorial](tutorial.md#edit-figures-and-re-render-saved-runs).
 
 Acceptance criteria:
 
@@ -182,7 +214,8 @@ Acceptance criteria:
   presentation-only changes do not invalidate numerical data or tiles.
 - Show the planned reused and rerun stages before execution. Missing/corrupt
   artifacts produce a clear error or an explicitly requested recalculation.
-- Derivative runs record source provenance, reused artifacts, and new settings.
+- Updates record current settings, reuse provenance and the previous manifest hash;
+  separate CLI derivatives still record source lineage. Prior figures are not retained.
   Fake-backend tests prove which tools were and were not called; queue and
   cancellation behavior remain the same as normal GUI runs.
 
@@ -208,9 +241,10 @@ These are useful next steps, not features already present in the Bash code:
   common camera to the grid. The viewer must work without a CDN, and matching
   browser/PyMOL camera conventions needs explicit verification. Structure
   alignment is separate from merely sharing a camera.
-- History setup reuse is implemented: **Use as template** restores protein order,
-  original pH selection, camera, shared ligand, and styling for a separate full
-  recalculation. Saved inputs are hash-verified, including submission snapshots
+- History setup reuse is implemented: **Edit calculation** restores protein order,
+  original pH selection, camera, shared ligand, and styling for a full recalculation
+  within the same session. **Duplicate calculation** explicitly creates a separate
+  calculation. Saved inputs are hash-verified, including submission snapshots
   of newly cancelled queued jobs. Original range parameters are preserved; older
   runs without them load explicit values. Portable project/configuration export
   remains planned. This is not automatic resume or composition-only editing.
@@ -230,8 +264,8 @@ later; the legacy final figure was PNG, so they are not parity requirements.
 
 1. Extend publication styling with font choices/alignment (basic styling and advanced surface/ligand controls are implemented).
 2. Add the activity model, import validation, and Python lollipop composition.
-3. Add publication styling and safe composition from an existing run.
-4. Add rendering from verified PQR/DX artifacts, then explicit selective resume.
+3. Extend saved-run composition with the forthcoming activity controls (basic editing is implemented).
+4. Add failed scientific-stage recovery (verified PQR/DX re-rendering and explicit saved-cell selection are implemented).
 5. Add optional PyMOL sessions, followed by camera preview and saved projects.
 6. Complete release signing and platform verification before polished public
    distribution; shell completion can be added independently.

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 from phmap.backends import (
@@ -28,7 +30,8 @@ from phmap.configuration import WorkflowOptions as WorkflowOptions
 from phmap.configuration import build_run_configuration as _configuration
 from phmap.errors import ConfigurationError
 from phmap.manifest import RunManifest, sha256_file, utc_now
-from phmap.models import RunInputs, structure_suffix
+from phmap.models import ProteinInput, RunInputs, structure_suffix
+from phmap.parallel import SINGLE_THREAD_ENV, CellCancelled, check_cancelled, run_cells
 from phmap.scientific import summarize_opendx, summarize_pqr
 from phmap.structure_formats import mmcif_preparation_info, prepare_mmcif
 from phmap.structures import structure_source
@@ -92,7 +95,10 @@ def _stage_dict(
 
 
 def _failed_stage_dict(
-    name: str, error: Exception, runner: CommandRunner, cwd: Path,
+    name: str,
+    error: Exception,
+    runner: CommandRunner,
+    cwd: Path,
 ) -> dict[str, Any]:
     """Retain a stage record even when no completed command result exists."""
 
@@ -112,13 +118,16 @@ def _failed_stage_dict(
     elif isinstance(error, CommandTimeoutError):
         details.update(
             timeout_seconds=error.timeout,
-            stdout=str(error.stdout_path), stderr=str(error.stderr_path),
+            stdout=str(error.stdout_path),
+            stderr=str(error.stderr_path),
         )
     elif isinstance(error, CommandStartError):
         details["executable"] = error.executable
     elif isinstance(error, ArtifactError):
         details["artifact"] = {
-            "path": str(error.path), "description": error.description, "reason": error.reason,
+            "path": str(error.path),
+            "description": error.description,
+            "reason": error.reason,
         }
     return details
 
@@ -160,9 +169,7 @@ class LocalWorkflow:
                 ),
                 (
                     "apbs",
-                    ApbsBackend(version_runner, executables["apbs"]).version(
-                        cwd=version_probe_dir
-                    ),
+                    ApbsBackend(version_runner, executables["apbs"]).version(cwd=version_probe_dir),
                 ),
                 (
                     "pymol",
@@ -180,14 +187,18 @@ class LocalWorkflow:
                     protein.path, name=f"{protein.protein_id}{structure_suffix(protein.path)}"
                 )
                 manifest.record_input(
-                    f"protein:{protein.protein_id}", protein.path, staged_pdb,
+                    f"protein:{protein.protein_id}",
+                    protein.path,
+                    staged_pdb,
                     source=structure_source(protein.path),
                 )
                 if structure_suffix(protein.path) == ".cif":
                     prepared = workspace.inputs / f"{protein.protein_id}.backend.pdb"
                     prepare_mmcif(staged_pdb, prepared)
                     manifest.record_input(
-                        f"backend-protein:{protein.protein_id}", staged_pdb, prepared,
+                        f"backend-protein:{protein.protein_id}",
+                        staged_pdb,
+                        prepared,
                         preparation=mmcif_preparation_info(),
                     )
                     staged_pdb = prepared
@@ -201,107 +212,110 @@ class LocalWorkflow:
                     )
                 staged_proteins[protein.protein_id] = (staged_pdb, staged_ligand)
 
-            rendered_tiles: list[RenderedTile] = []
-            for protein in self.inputs.proteins:
+            cells = [
+                (protein, ph) for protein in self.inputs.proteins for ph in self.inputs.ph_values
+            ]
+            workers = self.options.execution_configuration(len(cells))["effective_workers"]
+            manifest.prepare_tasks([(protein.protein_id, ph) for protein, ph in cells])
+
+            def calculate(cell: tuple[ProteinInput, Decimal], stop: Event) -> RenderedTile:
+                check_cancelled(stop)
+                protein, ph = cell
                 staged_pdb, staged_ligand = staged_proteins[protein.protein_id]
-                for ph in self.inputs.ph_values:
-                    ph_key = str(ph)
-                    task_id = f"{protein.protein_id}@{ph_key}"
-                    task = manifest.start_task(task_id, protein.protein_id, ph)
-                    paths = workspace.task_paths(protein.protein_id, ph_key)
-                    runner = CommandRunner(paths.pdb2pqr_stdout.parent, self.options.timeout)
-                    try:
-                        manifest.start_stage(task, "pdb2pqr")
-                        pqr_backend = Pdb2pqrBackend(runner, executables["pdb2pqr"])
-                        pqr_artifacts = pqr_backend.run(
-                            Pdb2pqrRequest(
-                                pdb_path=staged_pdb,
-                                pqr_path=paths.pqr,
-                                apbs_input_path=paths.apbs_input,
-                                ph=ph,
-                                force_field=self.options.force_field,
-                                ligand_path=staged_ligand,
-                                work_dir=paths.root,
-                            ),
-                            timeout=self.options.timeout,
+                ph_key = str(ph)
+                task = manifest.start_task(f"{protein.protein_id}@{ph_key}", protein.protein_id, ph)
+                paths = workspace.task_paths(protein.protein_id, ph_key)
+                runner = CommandRunner(
+                    paths.pdb2pqr_stdout.parent,
+                    self.options.timeout,
+                    SINGLE_THREAD_ENV if workers > 1 else None,
+                )
+                try:
+                    check_cancelled(stop)
+                    manifest.start_stage(task, "pdb2pqr")
+                    pqr_artifacts = Pdb2pqrBackend(runner, executables["pdb2pqr"]).run(
+                        Pdb2pqrRequest(
+                            pdb_path=staged_pdb,
+                            pqr_path=paths.pqr,
+                            apbs_input_path=paths.apbs_input,
+                            ph=ph,
+                            force_field=self.options.force_field,
+                            ligand_path=staged_ligand,
+                            work_dir=paths.root,
+                        ),
+                        timeout=self.options.timeout,
+                    )
+                    manifest.record_stage(
+                        task,
+                        _stage_dict(
+                            "pdb2pqr",
+                            pqr_artifacts.command,
+                            (pqr_artifacts.pqr_path, pqr_artifacts.apbs_input_path),
+                            metrics={"pqr": summarize_pqr(pqr_artifacts.pqr_path).as_dict()},
+                        ),
+                    )
+                    expected_dx = pdb2pqr_dx_path(pqr_artifacts.pqr_path)
+                    if expected_dx != paths.potential:
+                        raise ConfigurationError(
+                            "Workspace potential path does not match PDB2PQR output"
                         )
+                    check_cancelled(stop)
+                    manifest.start_stage(task, "apbs")
+                    apbs_artifacts = ApbsBackend(runner, executables["apbs"]).run(
+                        ApbsRequest(
+                            apbs_input_path=pqr_artifacts.apbs_input_path,
+                            dx_path=expected_dx,
+                            work_dir=paths.root,
+                        ),
+                        timeout=self.options.timeout,
+                    )
+                    manifest.record_stage(
+                        task,
+                        _stage_dict(
+                            "apbs",
+                            apbs_artifacts.command,
+                            (apbs_artifacts.dx_path,),
+                            metrics={"opendx": summarize_opendx(apbs_artifacts.dx_path).as_dict()},
+                        ),
+                    )
+                    check_cancelled(stop)
+                    manifest.start_stage(task, "pymol")
+                    pymol_artifacts = PyMOLBackend(runner, executables["pymol"]).render(
+                        PyMOLRenderRequest(
+                            pqr_path=pqr_artifacts.pqr_path,
+                            dx_path=apbs_artifacts.dx_path,
+                            png_path=paths.tile,
+                            script_path=paths.pymol_script,
+                            work_dir=paths.root,
+                            options=self.options.render_options(
+                                view=None if self.inputs.view is None else self.inputs.view.values,
+                                max_threads=1 if workers > 1 else None,
+                            ),
+                        ),
+                        timeout=self.options.timeout,
+                    )
+                    manifest.record_stage(
+                        task,
+                        _stage_dict(
+                            "pymol",
+                            pymol_artifacts.command,
+                            (pymol_artifacts.png_path, pymol_artifacts.script_path),
+                        ),
+                    )
+                    manifest.finish_task(task, "completed")
+                    return RenderedTile(protein.protein_id, ph, pymol_artifacts.png_path)
+                except CellCancelled as exc:
+                    manifest.finish_task(task, "cancelled", error=str(exc))
+                    raise
+                except Exception as exc:
+                    if stage := task.get("current_stage"):
                         manifest.record_stage(
-                            task,
-                            _stage_dict(
-                                "pdb2pqr",
-                                pqr_artifacts.command,
-                                (pqr_artifacts.pqr_path, pqr_artifacts.apbs_input_path),
-                                metrics={"pqr": summarize_pqr(pqr_artifacts.pqr_path).as_dict()},
-                            ),
+                            task, _failed_stage_dict(stage, exc, runner, paths.root)
                         )
+                    manifest.finish_task(task, "failed", error=str(exc))
+                    raise
 
-                        expected_dx = pdb2pqr_dx_path(pqr_artifacts.pqr_path)
-                        if expected_dx != paths.potential:
-                            raise ConfigurationError(
-                                "Workspace potential path does not match PDB2PQR output"
-                            )
-                        apbs_backend = ApbsBackend(runner, executables["apbs"])
-                        manifest.start_stage(task, "apbs")
-                        apbs_artifacts = apbs_backend.run(
-                            ApbsRequest(
-                                apbs_input_path=pqr_artifacts.apbs_input_path,
-                                dx_path=expected_dx,
-                                work_dir=paths.root,
-                            ),
-                            timeout=self.options.timeout,
-                        )
-                        manifest.record_stage(
-                            task,
-                            _stage_dict(
-                                "apbs",
-                                apbs_artifacts.command,
-                                (apbs_artifacts.dx_path,),
-                                metrics={
-                                    "opendx": summarize_opendx(
-                                        apbs_artifacts.dx_path
-                                    ).as_dict()
-                                },
-                            ),
-                        )
-
-                        pymol_backend = PyMOLBackend(runner, executables["pymol"])
-                        manifest.start_stage(task, "pymol")
-                        pymol_artifacts = pymol_backend.render(
-                            PyMOLRenderRequest(
-                                pqr_path=pqr_artifacts.pqr_path,
-                                dx_path=apbs_artifacts.dx_path,
-                                png_path=paths.tile,
-                                script_path=paths.pymol_script,
-                                work_dir=paths.root,
-                                options=self.options.render_options(
-                                    view=(
-                                        None
-                                        if self.inputs.view is None
-                                        else self.inputs.view.values
-                                    ),
-                                ),
-                            ),
-                            timeout=self.options.timeout,
-                        )
-                        manifest.record_stage(
-                            task,
-                            _stage_dict(
-                                "pymol",
-                                pymol_artifacts.command,
-                                (pymol_artifacts.png_path, pymol_artifacts.script_path),
-                            ),
-                        )
-                        rendered_tiles.append(
-                            RenderedTile(protein.protein_id, ph, pymol_artifacts.png_path)
-                        )
-                        manifest.finish_task(task, "completed")
-                    except Exception as exc:
-                        if stage := task.get("current_stage"):
-                            manifest.record_stage(
-                                task, _failed_stage_dict(stage, exc, runner, paths.root)
-                            )
-                        manifest.finish_task(task, "failed", error=str(exc))
-                        raise
+            rendered_tiles = run_cells(cells, calculate, workers=workers)
 
             figure = compose_grid(
                 protein_order=[
@@ -315,6 +329,9 @@ class LocalWorkflow:
             manifest.record_output("figure", figure)
             manifest.set_status("completed")
             return RunResult(workspace, figure, workspace.manifest)
-        except Exception as exc:
-            manifest.set_status("failed", error=str(exc))
+        except BaseException as exc:
+            manifest.cancel_unfinished()
+            manifest.set_status(
+                "cancelled" if isinstance(exc, KeyboardInterrupt) else "failed", error=str(exc)
+            )
             raise

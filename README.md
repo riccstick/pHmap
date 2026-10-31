@@ -114,15 +114,33 @@ ligand files and figure settings are available in the setup form. Validate the
 selection or start a calculation; the interface shows live stage progress,
 individual surfaces, logs, and the final PNG download.
 
+On first launch, a small optional setup dialog lets you save standard settings
+or **Skip — use defaults**. **Standard settings** in the sidebar remains available
+later. Rendering, publication styling, force field, and parallel workers are
+saved once per user, across workspaces and app versions. The calculation wizard
+then focuses on **Proteins**, **pH**, and **Review**. Advanced controls live under
+**Override settings for this calculation**; changing them does not alter your
+saved defaults. History editors restore the calculation's own settings instead
+of silently applying current global defaults. CLI arguments/defaults remain
+explicit and unchanged. See [standard settings](docs/tutorial.md#configure-standard-settings-once).
+
 The GUI queues one calculation at a time and can cancel queued or active runs.
+Within a calculation, **Parallel cells** runs independent protein/pH cells
+concurrently, including re-rendering. It defaults to up to two workers; reduce
+it for large proteins or limited memory. CLI runs retain their sequential
+default; add `--workers 2` or `--workers auto` to enable parallel work. See the
+[parallel execution guide](docs/tutorial.md#run-calculations-and-rendering-in-parallel)
+for CPU limits, memory considerations, and saved settings.
 History includes both GUI runs and CLI runs in the same `runs/` directory. Files
 are processed locally, with no remote calculation services or scripts. Optional
 structure fetching contacts the official RCSB archive; your variant files are
 never sent there. Verified cached downloads can be reused offline.
-Select a finished history item and click **Use as template** to load its saved
-structures, camera, shared ligand, pH selection, and styling into the form.
-Edit anything you need, then start a separate full calculation; the original
-result stays unchanged. Newly cancelled queued jobs retain a reusable setup too.
+After starting a calculation, further submissions refine that same calculation.
+Reopen one from history with **Edit calculation**, **Edit figure**, or **Re-render**.
+Its ID/history item stays the same; successful updates replace its current
+result without keeping old versions. Failed/cancelled updates retain the last
+good result. **New calculation** and **Duplicate calculation** explicitly start
+separate history items. Newly cancelled queued jobs retain a reusable setup too.
 See [reusing a calculation](docs/tutorial.md#reuse-a-calculation-from-history).
 Closing the browser tab does not stop calculations; stopping the GUI server
 with Ctrl+C (or quitting the desktop launcher) cancels its unfinished jobs and
@@ -179,8 +197,14 @@ pixi run phmap run example/mutant2.pdb --ph-range 3 8 1 \
   --label-gap 20 --ph-label-precision 1
 ```
 
-Use `--no-legend` to hide the shared legend. These controls style new runs;
-editing an existing run without recalculation is a follow-up feature. See the
+Use `--no-legend` to hide the shared legend. In history, **Edit figure** applies
+publication changes to saved tiles without scientific tools; **Re-render**
+changes surfaces from saved PQR/DX data without PDB2PQR or APBS. Both update the
+same calculation after success, verify checksums, and preview their stage plan.
+Raw/scientific artifacts are retained so editing and re-rendering can alternate.
+The CLI equivalents are `phmap compose RUN_DIR` and `phmap render RUN_DIR`;
+add `--in-place` to update the current calculation or `--plan` to verify only.
+Without `--in-place`, the CLI keeps its separate-output behavior. See the
 [publication styling guide](docs/tutorial.md#publication-styling).
 
 ## Python-only development
@@ -220,8 +244,9 @@ Available in the current Python application:
 - a double-click desktop launcher and tagged GitHub release builds; and
 - unit and fake-backend integration tests that do not need the scientific tools.
 
-Activity lollipops, advanced styling controls, interactive 3D camera editing,
-and selective reruns remain planned work. The legacy Bash and Script Server
+Activity lollipops, additional font/axis controls, interactive 3D camera editing,
+and automatic failed-stage resume remain planned work. Explicit composition,
+re-rendering, and saved-cell selection are implemented. The legacy Bash and Script Server
 implementations have been removed; their missing features are tracked rather
 than silently treated as implemented.
 

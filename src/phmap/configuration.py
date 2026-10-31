@@ -15,6 +15,7 @@ from phmap.backends.pymol import LigandRepresentation
 from phmap.compose import CompositionSettings, format_ph_labels
 from phmap.errors import ConfigurationError
 from phmap.models import RunInputs, structure_format
+from phmap.parallel import MAX_WORKERS, available_cpus
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,8 +47,15 @@ class WorkflowOptions:
     label_gap: int = 16
     show_colorbar: bool = True
     ph_label_precision: int | None = None
+    workers: int = 1
 
     def __post_init__(self) -> None:
+        if (
+            isinstance(self.workers, bool)
+            or not isinstance(self.workers, int)
+            or not 1 <= self.workers <= MAX_WORKERS
+        ):
+            raise ConfigurationError(f"Parallel workers must be an integer from 1 to {MAX_WORKERS}")
         if (
             isinstance(self.size, bool)
             or not isinstance(self.size, int)
@@ -66,11 +74,7 @@ class WorkflowOptions:
             or self.potential_level <= 0
         ):
             raise ConfigurationError("Potential level must be finite and positive")
-        if (
-            isinstance(self.timeout, bool)
-            or not math.isfinite(self.timeout)
-            or self.timeout <= 0
-        ):
+        if isinstance(self.timeout, bool) or not math.isfinite(self.timeout) or self.timeout <= 0:
             raise ConfigurationError("Backend timeout must be finite and positive")
         if len(self.ramp_colors) != 3:
             raise ConfigurationError("The potential ramp requires exactly three colors")
@@ -81,44 +85,76 @@ class WorkflowOptions:
         except BackendValidationError as exc:
             raise ConfigurationError(str(exc)) from exc
 
-    def render_options(self, *, view: tuple[float, ...] | None = None) -> PyMOLRenderOptions:
+    def render_options(
+        self,
+        *,
+        view: tuple[float, ...] | None = None,
+        max_threads: int | None = None,
+    ) -> PyMOLRenderOptions:
         """Build the same validated render settings for preflight and execution."""
 
         return PyMOLRenderOptions(
-            width=self.size, height=self.size, dpi=self.dpi, level=self.potential_level,
+            width=self.size,
+            height=self.size,
+            dpi=self.dpi,
+            level=self.potential_level,
             ramp_colors=self.ramp_colors,
             background="white" if self.background is None else self.background,
-            transparent_background=self.background is None, view=view, ray_trace=self.ray_trace,
-            surface_mode=self.surface_mode, surface_solvent=self.surface_solvent,
+            transparent_background=self.background is None,
+            view=view,
+            ray_trace=self.ray_trace,
+            surface_mode=self.surface_mode,
+            surface_solvent=self.surface_solvent,
             surface_ramp_above_mode=self.surface_ramp_above_mode,
             ligand_representation=self.ligand_representation,
+            max_threads=max_threads,
         )
+
+    def execution_configuration(self, cells: int, *, parallelizable: bool = True) -> dict[str, Any]:
+        effective = min(self.workers, max(1, cells), available_cpus()) if parallelizable else 1
+        return {
+            "workers": self.workers,
+            "effective_workers": effective,
+            "backend_threads": 1 if effective > 1 else None,
+        }
 
     def render_configuration(self) -> dict[str, object]:
         """Persist the effective settings in both queued jobs and run manifests."""
 
         return {
-            "size": self.size, "dpi": self.dpi, "potential_level": self.potential_level,
-            "ramp_colors": list(self.ramp_colors), "background": self.background,
-            "foreground": self.foreground, "ray_trace": self.ray_trace,
-            "surface_mode": self.surface_mode, "surface_solvent": self.surface_solvent,
+            "size": self.size,
+            "dpi": self.dpi,
+            "potential_level": self.potential_level,
+            "ramp_colors": list(self.ramp_colors),
+            "background": self.background,
+            "foreground": self.foreground,
+            "ray_trace": self.ray_trace,
+            "surface_mode": self.surface_mode,
+            "surface_solvent": self.surface_solvent,
             "surface_ramp_above_mode": self.surface_ramp_above_mode,
             "ligand_representation": self.ligand_representation,
         }
 
     def composition_settings(self) -> CompositionSettings:
         return CompositionSettings(
-            background=self.background, foreground=self.foreground,
-            potential_level=self.potential_level, ramp_colors=self.ramp_colors,
-            font_size=self.font_size, outer_margin=self.outer_margin,
-            column_gap=self.column_gap, row_gap=self.row_gap, label_gap=self.label_gap,
-            show_colorbar=self.show_colorbar, ph_label_precision=self.ph_label_precision,
+            background=self.background,
+            foreground=self.foreground,
+            potential_level=self.potential_level,
+            ramp_colors=self.ramp_colors,
+            font_size=self.font_size,
+            outer_margin=self.outer_margin,
+            column_gap=self.column_gap,
+            row_gap=self.row_gap,
+            label_gap=self.label_gap,
+            show_colorbar=self.show_colorbar,
+            ph_label_precision=self.ph_label_precision,
             dpi=self.dpi,
         )
 
     def composition_configuration(self, ph_values: Sequence[Decimal]) -> dict[str, object]:
         return {
-            "font": "pillow-default", **asdict(self.composition_settings()),
+            "font": "pillow-default",
+            **asdict(self.composition_settings()),
             "ph_labels": list(format_ph_labels(ph_values, self.ph_label_precision)),
         }
 
@@ -127,22 +163,32 @@ def build_run_configuration(inputs: RunInputs, options: WorkflowOptions) -> dict
     """Use identical validated configuration for queued submissions and final runs."""
 
     return {
-        "proteins": [{
-            "id": protein.protein_id, "label": protein.label, "path": str(protein.path),
-            "format": structure_format(protein.path),
-            "ligand": None if protein.ligand is None else str(protein.ligand),
-        } for protein in inputs.proteins],
+        "proteins": [
+            {
+                "id": protein.protein_id,
+                "label": protein.label,
+                "path": str(protein.path),
+                "format": structure_format(protein.path),
+                "ligand": None if protein.ligand is None else str(protein.ligand),
+            }
+            for protein in inputs.proteins
+        ],
         "ph_values": [str(ph) for ph in inputs.ph_values],
         "ph_mode": inputs.ph_mode.value,
-        "ph_range": None if inputs.ph_range is None else {
-            "start": str(inputs.ph_range.start), "stop": str(inputs.ph_range.stop),
+        "ph_range": None
+        if inputs.ph_range is None
+        else {
+            "start": str(inputs.ph_range.start),
+            "stop": str(inputs.ph_range.stop),
             "step": str(inputs.ph_range.step),
         },
         "view": None if inputs.view is None else list(inputs.view.values),
+        "execution": options.execution_configuration(len(inputs.proteins) * len(inputs.ph_values)),
         "render": options.render_configuration(),
         "composition": options.composition_configuration(inputs.ph_values),
         "scientific": {
-            "force_field": options.force_field, "titration_state_method": "propka",
+            "force_field": options.force_field,
+            "titration_state_method": "propka",
             "drop_water": True,
         },
     }

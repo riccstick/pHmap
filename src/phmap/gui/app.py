@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import secrets
@@ -28,7 +29,12 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from phmap import __version__
 from phmap.doctor import run_doctor
 from phmap.errors import ConfigurationError, StructureFetchError, StructureNotFoundError
-from phmap.inputs import load_pymol_view, validate_run_inputs, validate_structure_files
+from phmap.inputs import (
+    load_pymol_view,
+    parse_ph_selection,
+    validate_run_inputs,
+    validate_structure_files,
+)
 from phmap.models import (
     STRUCTURE_SUFFIXES,
     InputValidationError,
@@ -36,10 +42,13 @@ from phmap.models import (
     structure_format,
     structure_suffix,
 )
+from phmap.parallel import MAX_WORKERS, available_cpus, recommended_workers
+from phmap.saved_runs import Operation, SavedRun
 from phmap.structure_formats import validate_mmcif
 from phmap.structures import fetch_structure, normalize_pdb_id, structure_source
 
 from .jobs import TERMINAL, JobManager
+from .preferences import PreferencesRequest, PreferencesStore
 from .schemas import FetchSettings
 from .schemas import RunSettings as RunSettings
 
@@ -47,27 +56,43 @@ _ASSETS = Path(__file__).parent
 _MAX_UPLOAD = 64 * 1024 * 1024
 
 
+def _asset_version() -> str:
+    """Change every UI asset URL when markup, styles, or scripts change."""
+    digest = hashlib.sha256()
+    for path in sorted((_ASSETS / "static").rglob("*")):
+        if path.is_file():
+            digest.update(path.relative_to(_ASSETS).as_posix().encode())
+            digest.update(path.read_bytes())
+    digest.update((_ASSETS / "templates/index.html").read_bytes())
+    return digest.hexdigest()[:16]
+
+
 def _summary(inputs: RunInputs) -> dict[str, Any]:
     return {
-        "proteins": [{
-            "id": p.protein_id, "label": p.label,
-            "format": structure_format(p.path),
-            "source": structure_source(p.path) or None,
-        } for p in inputs.proteins],
+        "proteins": [
+            {
+                "id": p.protein_id,
+                "label": p.label,
+                "format": structure_format(p.path),
+                "source": structure_source(p.path) or None,
+            }
+            for p in inputs.proteins
+        ],
         "ph_values": [str(value) for value in inputs.ph_values],
         "total": len(inputs.proteins) * len(inputs.ph_values),
     }
 
 
 async def _save_upload(
-    upload: UploadFile, parent: Path, *, suffix: str | tuple[str, ...],
+    upload: UploadFile,
+    parent: Path,
+    *,
+    suffix: str | tuple[str, ...],
 ) -> Path:
     filename = Path((upload.filename or "").replace("\\", "/")).name
     suffixes = (suffix,) if isinstance(suffix, str) else suffix
     if not filename or Path(filename).suffix.lower() not in suffixes:
-        raise InputValidationError(
-            f"Choose a {' / '.join(suffixes)} file; received {filename!r}"
-        )
+        raise InputValidationError(f"Choose a {' / '.join(suffixes)} file; received {filename!r}")
     if not filename.isprintable() or filename.startswith("."):
         raise InputValidationError("File names must be printable and must not start with '.'")
     parent.mkdir(parents=True, exist_ok=True)
@@ -85,12 +110,16 @@ async def _save_upload(
 
 
 def create_app(
-    runs_dir: Path = Path("runs"), *, manager: JobManager | None = None,
+    runs_dir: Path = Path("runs"),
+    *,
+    manager: JobManager | None = None,
     desktop_token: str = "",
+    preferences_path: Path | None = None,
 ) -> FastAPI:
     """Construct the application without starting a server or worker on import."""
 
     jobs = manager or JobManager(runs_dir)
+    preferences = PreferencesStore(preferences_path)
     token = secrets.token_urlsafe(32)
     templates = Jinja2Templates(directory=str(_ASSETS / "templates"))
 
@@ -115,7 +144,8 @@ def create_app(
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             provided = request.headers.get("x-phmap-token", "")
             desktop_shutdown = (
-                request.url.path == "/api/desktop/shutdown" and bool(desktop_token)
+                request.url.path == "/api/desktop/shutdown"
+                and bool(desktop_token)
                 and secrets.compare_digest(
                     request.headers.get("x-phmap-desktop-token", ""), desktop_token
                 )
@@ -135,7 +165,7 @@ def create_app(
             "default-src 'self'; script-src 'self'; style-src 'self'; "
             "img-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'"
         )
-        if request.url.path.startswith("/api/"):
+        if request.url.path == "/" or request.url.path.startswith(("/api/", "/static/")):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -144,9 +174,44 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> Response:
         return templates.TemplateResponse(
-            request=request, name="index.html",
-            context={"token": token, "version": __version__, "runs_dir": str(jobs.runs_dir)},
+            request=request,
+            name="index.html",
+            context={
+                "token": token,
+                "version": __version__,
+                "asset_version": _asset_version(),
+                "runs_dir": str(jobs.runs_dir),
+                "recommended_workers": recommended_workers(),
+                "available_cpus": available_cpus(),
+                "max_workers": MAX_WORKERS,
+                "preferences": preferences.read(),
+            },
         )
+
+    @app.get("/api/preferences")
+    def get_preferences() -> dict[str, Any]:
+        return preferences.read()
+
+    @app.put("/api/preferences")
+    def save_preferences(settings: PreferencesRequest) -> dict[str, Any]:
+        try:
+            return preferences.save(settings.defaults)
+        except (ConfigurationError, ValueError, OSError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/api/preferences/skip")
+    def skip_preferences() -> dict[str, Any]:
+        try:
+            return preferences.save()
+        except (ConfigurationError, OSError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/api/preferences/reset")
+    def reset_preferences() -> dict[str, Any]:
+        try:
+            return preferences.save(reset=True)
+        except (ConfigurationError, OSError) as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @app.get("/api/doctor")
     def doctor() -> dict[str, Any]:
@@ -176,7 +241,10 @@ def create_app(
     async def resolve_pdb(pdb_id: str, *, refresh: bool = False) -> Path:
         try:
             return await asyncio.to_thread(
-                fetch_structure, pdb_id, jobs.control / "structures", refresh=refresh,
+                fetch_structure,
+                pdb_id,
+                jobs.control / "structures",
+                refresh=refresh,
             )
         except StructureNotFoundError as exc:
             raise HTTPException(404, str(exc)) from exc
@@ -195,7 +263,9 @@ def create_app(
         except ConfigurationError as exc:
             raise HTTPException(422, str(exc)) from exc
         return {
-            "pdb_id": pdb_id, "filename": path.name, "format": "mmcif",
+            "pdb_id": pdb_id,
+            "filename": path.name,
+            "format": "mmcif",
             "source": await run_in_threadpool(structure_source, path),
         }
 
@@ -208,6 +278,72 @@ def create_app(
                 if not all(isinstance(upload, UploadFile) for upload in uploads):
                     raise InputValidationError("Choose protein structure files")
                 rows = settings.selected_rows(len(uploads))
+                if settings.operation != "full":
+                    if uploads or any(row.saved_protein_id is None for row in rows):
+                        raise InputValidationError(
+                            "Artifact reuse accepts saved rows only; use a template for new inputs"
+                        )
+                    if settings.source_manifest_sha256 is None:
+                        raise InputValidationError(
+                            "Load the saved run editor before reusing artifacts"
+                        )
+                    assert settings.source_run_id is not None
+                    source_run = await run_in_threadpool(
+                        SavedRun,
+                        jobs.run_directory(settings.source_run_id),
+                        expected_manifest=settings.source_manifest_sha256,
+                    )
+                    ligand = form.get("ligand")
+                    if isinstance(ligand, UploadFile) and ligand.filename:
+                        raise InputValidationError(
+                            "Changing the ligand requires a full calculation"
+                        )
+                    has_ligand = any(
+                        item.get("ligand") is not None
+                        for item in source_run.configuration["proteins"]
+                    )
+                    if settings.reuse_ligand != has_ligand:
+                        raise InputValidationError(
+                            "Changing the ligand requires a full calculation"
+                        )
+                    values, _ = parse_ph_selection(
+                        ph_values=settings.ph_values if settings.ph_mode == "explicit" else None,
+                        ph_range=(settings.ph_start, settings.ph_stop, settings.ph_step)
+                        if settings.ph_mode == "range"
+                        else None,
+                    )
+                    with tempfile.TemporaryDirectory(
+                        prefix="editor-", dir=jobs.uploads
+                    ) as temporary:
+                        view_upload = form.get("view")
+                        view_value = None
+                        if isinstance(view_upload, UploadFile) and view_upload.filename:
+                            if settings.reuse_view:
+                                raise InputValidationError(
+                                    "Choose a saved camera or upload, not both"
+                                )
+                            path = await _save_upload(view_upload, Path(temporary), suffix=".txt")
+                            view_value = await run_in_threadpool(load_pymol_view, path)
+                        workflow = await run_in_threadpool(
+                            source_run.prepare,
+                            settings.operation,
+                            options,
+                            protein_ids=[row.saved_protein_id or "" for row in rows],
+                            labels=settings.labels or None,
+                            ph_values=[str(ph) for ph in values],
+                            view=view_value,
+                            use_saved_view=settings.reuse_view,
+                        )
+                        plan = workflow.plan()
+                        if validate_only:
+                            return {"valid": True, **plan}
+                        run_id = await run_in_threadpool(
+                            jobs.submit_saved,
+                            workflow,
+                            name=settings.name,
+                            update_in_place=settings.update_in_place,
+                        )
+                        return {"run_id": run_id, **plan}
                 with tempfile.TemporaryDirectory(
                     prefix="selection-", dir=jobs.uploads
                 ) as temporary:
@@ -215,9 +351,13 @@ def create_app(
                     uploaded = []
                     for index, upload in enumerate(uploads):
                         assert isinstance(upload, UploadFile)
-                        uploaded.append(await _save_upload(
-                            upload, root / str(index), suffix=STRUCTURE_SUFFIXES,
-                        ))
+                        uploaded.append(
+                            await _save_upload(
+                                upload,
+                                root / str(index),
+                                suffix=STRUCTURE_SUFFIXES,
+                            )
+                        )
                     view = form.get("view")
                     view_path = None
                     if isinstance(view, UploadFile) and view.filename:
@@ -230,24 +370,30 @@ def create_app(
                     saved_paths: dict[str, Path] = {}
                     if settings.source_run_id is not None:
                         source = await run_in_threadpool(
-                            jobs.load_template, settings.source_run_id,
+                            jobs.load_template,
+                            settings.source_run_id,
                         )
                         for row in rows:
                             if row.saved_protein_id is not None:
                                 saved = await run_in_threadpool(
-                                    source.protein, row.saved_protein_id,
+                                    source.protein,
+                                    row.saved_protein_id,
                                 )
                                 staged_size = sum(
                                     path.stat().st_size
-                                    for path in root.rglob("*") if path.is_file()
+                                    for path in root.rglob("*")
+                                    if path.is_file()
                                 )
                                 if staged_size + saved.path.stat().st_size > _MAX_UPLOAD:
                                     raise InputValidationError("Total saved input exceeds 64 MiB")
-                                destination = root / "saved" / (
-                                    row.saved_protein_id + structure_suffix(saved.path)
+                                destination = (
+                                    root
+                                    / "saved"
+                                    / (row.saved_protein_id + structure_suffix(saved.path))
                                 )
                                 saved_paths[row.saved_protein_id] = await run_in_threadpool(
-                                    saved.copy_to, destination,
+                                    saved.copy_to,
+                                    destination,
                                 )
                         if settings.reuse_view:
                             if view_path is not None:
@@ -271,7 +417,8 @@ def create_app(
                             if saved_ligand is None:
                                 raise InputValidationError("The source has no saved shared ligand")
                             ligand_path = await run_in_threadpool(
-                                saved_ligand.copy_to, root / "saved-ligand.mol2",
+                                saved_ligand.copy_to,
+                                root / "saved-ligand.mol2",
                             )
                     if sum(path.stat().st_size for path in root.rglob("*") if path.is_file()) > (
                         _MAX_UPLOAD
@@ -295,21 +442,30 @@ def create_app(
                         )
                     inputs = await run_in_threadpool(
                         validate_run_inputs,
-                        paths, labels=settings.labels or None, view_file=view_path,
+                        paths,
+                        labels=settings.labels or None,
+                        view_file=view_path,
                         protein_ids=[row.saved_protein_id for row in rows],
                         ligand=ligand_path,
                         ph_values=settings.ph_values if settings.ph_mode == "explicit" else None,
                         ph_range=(settings.ph_start, settings.ph_stop, settings.ph_step)
-                        if settings.ph_mode == "range" else None,
+                        if settings.ph_mode == "range"
+                        else None,
                     )
                     summary = await run_in_threadpool(_summary, inputs)
                     summary["render"] = options.render_configuration()
                     summary["composition"] = options.composition_configuration(inputs.ph_values)
+                    summary["execution"] = options.execution_configuration(summary["total"])
                     if validate_only:
                         return {"valid": True, **summary}
                     run_id = await run_in_threadpool(
-                        jobs.submit, inputs, options, name=settings.name,
+                        jobs.submit,
+                        inputs,
+                        options,
+                        name=settings.name,
                         based_on=None if source is None else source.based_on,
+                        update_run_id=settings.source_run_id if settings.update_in_place else None,
+                        expected_manifest=settings.source_manifest_sha256,
                     )
                     return {"run_id": run_id, **summary}
         except ValidationError as exc:
@@ -322,7 +478,8 @@ def create_app(
             raise HTTPException(422, str(exc)) from exc
         except (KeyError, TypeError, OSError) as exc:
             raise HTTPException(
-                422, "Saved run inputs or metadata are missing or unreadable",
+                422,
+                "Saved run inputs or metadata are missing or unreadable",
             ) from exc
 
     @app.post("/api/validate")
@@ -341,15 +498,39 @@ def create_app(
             raise HTTPException(404, "Run not found or its manifest is unreadable") from exc
 
     @app.get("/api/runs/{run_id}/template")
-    def template(run_id: str) -> dict[str, Any]:
+    def template(run_id: str, edit: bool = False) -> dict[str, Any]:
         try:
-            return jobs.template(run_id)
+            data = jobs.template(run_id)
+            if edit:
+                snapshot = jobs.snapshot(run_id)
+                data["settings"].update(
+                    name=snapshot["name"],
+                    update_in_place=True,
+                    source_manifest_sha256=(
+                        snapshot["manifest_sha256"] or snapshot["submission_sha256"]
+                    ),
+                )
+            return data
         except FileNotFoundError as exc:
             raise HTTPException(404, "Run not found") from exc
         except ConfigurationError as exc:
             raise HTTPException(422, str(exc)) from exc
         except (KeyError, TypeError, ValueError, OSError) as exc:
             raise HTTPException(422, "Saved run settings or inputs are unreadable") from exc
+
+    @app.get("/api/runs/{run_id}/editor")
+    def editor(run_id: str, operation: Operation = "compose") -> dict[str, Any]:
+        try:
+            root = jobs.run_directory(run_id)
+            saved = SavedRun(root)
+            data = jobs.load_template(run_id).response(
+                name=f"{operation} · {run_id}", verify_inputs=False
+            )
+            data["settings"].update(operation=operation, source_manifest_sha256=saved.digest)
+            data["settings"].update(name=jobs.snapshot(run_id)["name"], update_in_place=True)
+            return data
+        except (ConfigurationError, ValueError, KeyError, TypeError, OSError) as exc:
+            raise HTTPException(422, f"Cannot open saved run: {exc}") from exc
 
     @app.post("/api/runs/{run_id}/cancel")
     def cancel(run_id: str) -> dict[str, Any]:
@@ -379,7 +560,8 @@ def create_app(
                 await asyncio.sleep(0.75)
 
         return StreamingResponse(
-            updates(), media_type="text/event-stream",
+            updates(),
+            media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
@@ -390,8 +572,17 @@ def create_app(
             if not path.is_relative_to(root) or not path.is_file():
                 raise FileNotFoundError
             if path.suffix.lower() not in {
-                ".png", ".json", ".log", ".pqr", ".dx", ".in", ".pml", ".pdb", ".mol2",
-                ".cif", ".mmcif",
+                ".png",
+                ".json",
+                ".log",
+                ".pqr",
+                ".dx",
+                ".in",
+                ".pml",
+                ".pdb",
+                ".mol2",
+                ".cif",
+                ".mmcif",
             }:
                 raise FileNotFoundError
             return path

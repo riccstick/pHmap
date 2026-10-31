@@ -8,6 +8,7 @@ function templateFormValues(settings) {
       "ph-start": settings.ph_start, "ph-stop": settings.ph_stop,
       "ph-step": settings.ph_step, "ph-values": settings.ph_values,
       size: settings.size, dpi: settings.dpi, level: settings.level,
+      workers: settings.workers ?? 1,
       background: settings.background === null ? "transparent" : settings.background,
       foreground: settings.foreground, ramp: settings.ramp_colors.join(","),
       "force-field": settings.force_field,

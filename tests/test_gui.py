@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from phmap.cli import main
 from phmap.gui.app import create_app
 from phmap.gui.jobs import JobManager, write_json
+from phmap.parallel import available_cpus
 
 
 @pytest.fixture
@@ -39,9 +40,19 @@ def _token(client: TestClient) -> dict[str, str]:
 
 def _submit(client: TestClient, *, endpoint: str = "/api/runs", **settings):  # type: ignore[no-untyped-def]
     return client.post(
-        endpoint, headers=_token(client),
-        data={"settings": json.dumps({"ph_mode": "explicit", "ph_values": "5, 7",
-                                      "size": 64, "ray_trace": False, **settings})},
+        endpoint,
+        headers=_token(client),
+        data={
+            "settings": json.dumps(
+                {
+                    "ph_mode": "explicit",
+                    "ph_values": "5, 7",
+                    "size": 64,
+                    "ray_trace": False,
+                    **settings,
+                }
+            )
+        },
         files=[("proteins", ("protein sample.pdb", b"ATOM\n", "chemical/x-pdb"))],
     )
 
@@ -56,33 +67,499 @@ def _wait(client: TestClient, run_id: str, expected: set[str]) -> dict:
     pytest.fail(f"Run never reached {expected}: {data}")
 
 
+@pytest.mark.parametrize("endpoint", ["/api/validate", "/api/runs"])
+@pytest.mark.parametrize("changes", [
+    {"ph_mode": "range", "ph_start": "-0.1", "ph_stop": "1", "ph_step": "0.2"},
+    {"ph_mode": "range", "ph_start": "13", "ph_stop": "14.1", "ph_step": "0.2"},
+    {"ph_mode": "range", "ph_start": "0", "ph_stop": "14", "ph_step": "0"},
+    {"ph_values": "-0.1, 7"},
+    {"ph_values": "7, 14.1"},
+])
+def test_ph_bounds_and_positive_step_are_enforced_before_queueing(
+    client: TestClient, endpoint: str, changes: dict,
+) -> None:
+    response = _submit(client, endpoint=endpoint, **changes)
+    assert response.status_code == 422, response.text
+    assert client.get("/api/runs").json() == []
+
+
+@pytest.mark.parametrize("start,stop,step,expected", [
+    ("0", "14", "7", ["0", "7", "14"]),
+    ("0.2", "1.2", "0.2", ["0.2", "0.4", "0.6", "0.8", "1.0", "1.2"]),
+])
+def test_ph_bounds_are_inclusive_and_typed_fine_steps_remain_valid(
+    client: TestClient, start: str, stop: str, step: str, expected: list[str],
+) -> None:
+    response = _submit(
+        client, endpoint="/api/validate", ph_mode="range", ph_start=start,
+        ph_stop=stop, ph_step=step,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["ph_values"] == expected
+    assert client.get("/api/runs").json() == []
+
+
+@pytest.mark.parametrize("operation", ["compose", "render"])
+def test_history_editor_validates_a_stage_plan_and_queues_an_immutable_derivative(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    original = _submit(client).json()["run_id"]
+    finished = _wait(client, original, {"completed", "failed"})
+    assert finished["status"] == "completed", finished
+    manifest_url = f"/api/runs/{original}/files/manifest.json"
+    original_bytes = client.get(manifest_url).content
+    assert finished["can_rework"]
+    # Editing artifacts must work even if the raw inputs are no longer present.
+    for path in (Path(finished["directory"]) / "inputs").iterdir():
+        path.unlink()
+    editor = client.get(f"/api/runs/{original}/editor", params={"operation": operation})
+    assert editor.status_code == 200, editor.text
+    settings = editor.json()["settings"]
+    assert settings["operation"] == operation and settings["source_manifest_sha256"]
+    settings.update(
+        update_in_place=False,
+        labels=["Restyled"],
+        font_size=40,
+        ph_mode="explicit",
+        ph_values="7, 5",
+        show_colorbar=False,
+        ph_label_precision=1,
+    )
+    if operation == "render":
+        settings.update(size=96, surface_mode=1, ramp_colors=["blue", "white", "red"])
+    else:
+        monkeypatch.setenv("PATH", "")  # Compose must not require any scientific executables.
+    request = {"headers": _token(client), "data": {"settings": json.dumps(settings)}}
+    before = len(client.get("/api/runs").json())
+    plan = client.post("/api/validate", **request)
+    assert plan.status_code == 200, plan.text
+    assert plan.json()["run"] == (
+        ["composition"] if operation == "compose" else ["PyMOL", "composition"]
+    )
+    assert len(client.get("/api/runs").json()) == before
+    response = client.post("/api/runs", **request)
+    assert response.status_code == 202, response.text
+    new_id = response.json()["run_id"]
+    result = _wait(client, new_id, {"completed", "failed"})
+    assert result["status"] == "completed", result
+    assert new_id != original
+    assert result["configuration"]["ph_values"] == ["7", "5"]
+    assert result["configuration"]["composition"]["font_size"] == 40
+    data = client.get(f"/api/runs/{new_id}/files/manifest.json").json()
+    assert data["based_on"]["operation"] == operation
+    assert data["based_on"]["manifest_sha256"] == settings["source_manifest_sha256"]
+    assert data["tasks"][0]["stages"][0]["reused"]
+    assert client.get(manifest_url).content == original_bytes
+    assert result["figure"] and not result["can_template"]
+    assert result["cells"][0]["metrics"]["pqr"]["total_charge"] == -0.3
+
+
+@pytest.mark.parametrize(
+    "changes,explanation",
+    [
+        ({"force_field": "AMBER"}, "force field"),
+        ({"ph_mode": "explicit", "ph_values": "6"}, "saved pH"),
+        ({"structures": [{"pdb_id": "3SQR"}]}, "saved rows"),
+        ({"size": 96}, "Re-render"),
+        ({"level": 2}, "Re-render"),
+        ({"source_manifest_sha256": "a" * 64}, "manifest changed"),
+        ({"source_manifest_sha256": None}, "editor"),
+    ],
+)
+def test_gui_artifact_reuse_rejects_incompatible_settings_without_queueing(
+    client: TestClient,
+    changes: dict,
+    explanation: str,
+) -> None:
+    original = _submit(client).json()["run_id"]
+    assert _wait(client, original, {"completed", "failed"})["status"] == "completed"
+    settings = client.get(f"/api/runs/{original}/editor").json()["settings"]
+    settings.update(changes)
+    response = client.post(
+        "/api/runs", headers=_token(client), data={"settings": json.dumps(settings)}
+    )
+    assert response.status_code == 422, response.text
+    assert explanation in response.json()["detail"]
+    assert len(client.get("/api/runs").json()) == 1
+
+
+def test_gui_saved_tile_corruption_is_reported_before_queueing(client: TestClient) -> None:
+    original = _submit(client).json()["run_id"]
+    completed = _wait(client, original, {"completed", "failed"})
+    settings = client.get(f"/api/runs/{original}/editor").json()["settings"]
+    (Path(completed["directory"]) / completed["tiles"][0]).write_bytes(b"changed tile")
+    response = client.post(
+        "/api/validate", headers=_token(client), data={"settings": json.dumps(settings)}
+    )
+    assert response.status_code == 422 and "checksum" in response.text
+    assert len(client.get("/api/runs").json()) == 1
+
+
+def test_gui_parallel_settings_are_saved_restored_and_changeable_for_re_rendering(
+    client: TestClient,
+) -> None:
+    source_id = _submit(client, workers=2).json()["run_id"]
+    complete = _wait(client, source_id, {"completed", "failed"})
+    assert complete["status"] == "completed", complete
+    assert complete["configuration"]["execution"]["workers"] == 2
+    settings = client.get(f"/api/runs/{source_id}/editor?operation=render").json()["settings"]
+    assert settings["workers"] == 2
+    settings["workers"] = 1
+    validate = client.post(
+        "/api/validate", headers=_token(client), data={"settings": json.dumps(settings)}
+    )
+    assert validate.status_code == 200, validate.text
+    assert validate.json()["execution"]["effective_workers"] == 1
+    response = client.post(
+        "/api/runs", headers=_token(client), data={"settings": json.dumps(settings)}
+    )
+    assert response.status_code == 202, response.text
+    complete = _wait(client, source_id, {"completed", "failed"})
+    assert complete["status"] == "completed", complete
+    assert complete["configuration"]["execution"]["workers"] == 1
+    assert (
+        client.get(f"/api/runs/{source_id}/template?edit=true").json()["settings"]["workers"] == 1
+    )
+
+
+def test_derivative_queue_and_active_render_can_be_cancelled(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    original = _submit(client).json()["run_id"]
+    assert _wait(client, original, {"completed", "failed"})["status"] == "completed"
+    _executable(
+        tmp_path,
+        "pymol",
+        r"""
+        import pathlib
+        import sys
+        import time
+        if sys.argv[1:] == ["--version"]:
+            print("PyMOL 3.1.0")
+            raise SystemExit(0)
+        pathlib.Path("started").touch()
+        time.sleep(30)
+    """,
+    )
+    settings = client.get(f"/api/runs/{original}/editor?operation=render").json()["settings"]
+    settings["update_in_place"] = False  # Explicit copies still use the ordinary queue.
+    request = {"headers": _token(client), "data": {"settings": json.dumps(settings)}}
+    first = client.post("/api/runs", **request).json()["run_id"]
+    marker = tmp_path / "runs" / first / "work/protein-sample/ph-5/started"
+    deadline = time.monotonic() + 10
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert marker.exists()
+    settings["operation"] = "compose"
+    second = client.post(
+        "/api/runs", headers=_token(client), data={"settings": json.dumps(settings)}
+    ).json()["run_id"]
+    assert client.get(f"/api/runs/{second}").json()["status"] == "queued"
+    assert client.post(f"/api/runs/{second}/cancel", headers=_token(client)).status_code == 200
+    assert _wait(client, second, {"cancelled"})["completed"] == 0
+    assert not (tmp_path / "runs" / second).exists()
+    assert client.post(f"/api/runs/{first}/cancel", headers=_token(client)).status_code == 200
+    cancelled = _wait(client, first, {"cancelled"})
+    data = client.get(f"/api/runs/{first}/files/manifest.json").json()
+    assert not cancelled["figure"] and data["based_on"]["operation"] == "render"
+    assert [stage["status"] for stage in data["tasks"][0]["stages"]] == [
+        "completed",
+        "completed",
+        "cancelled",
+    ]
+
+
+def test_figure_editor_keeps_multiple_protein_identities_while_reordering(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/api/runs",
+        headers=_token(client),
+        data={
+            "settings": json.dumps(
+                {
+                    "labels": ["WT", "Variant"],
+                    "ph_mode": "explicit",
+                    "ph_values": "5, 7",
+                    "size": 64,
+                    "ray_trace": False,
+                }
+            )
+        },
+        files=[("proteins", ("wt.pdb", b"ATOM\n")), ("proteins", ("variant.pdb", b"ATOM\n"))],
+    )
+    source_id = response.json()["run_id"]
+    assert _wait(client, source_id, {"completed", "failed"})["status"] == "completed"
+    settings = client.get(f"/api/runs/{source_id}/editor").json()["settings"]
+    settings.update(
+        structures=list(reversed(settings["structures"])),
+        labels=["New variant", "New WT"],
+        ph_values="7, 5",
+    )
+    response = client.post(
+        "/api/runs", headers=_token(client), data={"settings": json.dumps(settings)}
+    )
+    assert response.status_code == 202, response.text
+    result = _wait(client, response.json()["run_id"], {"completed", "failed"})
+    assert result["status"] == "completed", result
+    assert [(cell["protein_id"], cell["protein"], cell["ph"]) for cell in result["cells"]] == [
+        ("variant", "New variant", "7"),
+        ("variant", "New variant", "5"),
+        ("wt", "New WT", "7"),
+        ("wt", "New WT", "5"),
+    ]
+
+
+def test_one_calculation_can_be_edited_rendered_and_fully_rerun_repeatedly(
+    client: TestClient,
+) -> None:
+    original = _submit(client, name="My calculation").json()["run_id"]
+    first = _wait(client, original, {"completed", "failed"})
+    assert first["status"] == "completed"
+    root = Path(first["directory"])
+    created = first["created_at"]
+    previous_revision = first["figure_revision"]
+    edits = [
+        ("compose", {"font_size": 36, "labels": ["Updated label"]}),
+        ("render", {"size": 96, "surface_mode": 3}),
+        ("compose", {"outer_margin": 50, "show_colorbar": False}),
+        ("full", {"ph_mode": "explicit", "ph_values": "6", "force_field": "AMBER"}),
+        ("compose", {"font_size": 28}),
+        ("render", {"size": 80}),
+    ]
+    for operation, changes in edits:
+        endpoint = (
+            f"/api/runs/{original}/template?edit=true"
+            if operation == "full"
+            else f"/api/runs/{original}/editor?operation={operation}"
+        )
+        response = client.get(endpoint)
+        assert response.status_code == 200, response.text
+        settings = response.json()["settings"]
+        assert settings["update_in_place"] and settings["name"] == "My calculation"
+        settings.update(changes)
+        response = client.post(
+            "/api/runs", headers=_token(client), data={"settings": json.dumps(settings)}
+        )
+        assert response.status_code == 202, response.text
+        assert response.json()["run_id"] == original
+        result = _wait(client, original, {"completed", "failed"})
+        assert result["status"] == "completed", result
+        assert result["created_at"] == created and result["can_template"] and result["can_rework"]
+        assert result["figure_revision"] != previous_revision
+        previous_revision = result["figure_revision"]
+        assert len(client.get("/api/runs").json()) == 1
+        assert not (root.parent / ".phmap-updates" / original).exists()
+        manifest = client.get(f"/api/runs/{original}/files/manifest.json").json()
+        assert manifest["run_id"] == original and "based_on" not in manifest
+        assert manifest["last_update"]["operation"] == operation
+        for task in manifest["tasks"]:
+            assert [stage["name"] for stage in task["stages"]] == ["pdb2pqr", "apbs", "pymol"]
+            for stage in task["stages"]:
+                for output in stage["outputs"]:
+                    assert Path(output["path"]).is_relative_to(root)
+                    assert Path(output["path"]).is_file()
+        assert (root / "inputs/protein-sample.pdb").read_bytes() == b"ATOM\n"
+    assert result["configuration"]["scientific"]["force_field"] == "AMBER"
+    assert result["configuration"]["ph_values"] == ["6"]
+    assert not (root / "work/protein-sample/ph-5").exists()
+    assert not (root / "renders/protein-sample/ph-7.png").exists()
+
+
+def test_failed_in_place_render_preserves_last_good_result_and_can_retry(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    original = _submit(client).json()["run_id"]
+    assert _wait(client, original, {"completed", "failed"})["status"] == "completed"
+    manifest_url = f"/api/runs/{original}/files/manifest.json"
+    figure_url = f"/api/runs/{original}/files/output/pHmap.png"
+    manifest_before = client.get(manifest_url).content
+    figure_before = client.get(figure_url).content
+    _executable(
+        tmp_path,
+        "pymol",
+        r"""
+        import sys
+        if sys.argv[1:] == ["--version"]:
+            print("PyMOL 3.1.0")
+            raise SystemExit(0)
+        print("deliberate render failure", file=sys.stderr)
+        raise SystemExit(4)
+    """,
+    )
+    settings = client.get(f"/api/runs/{original}/editor?operation=render").json()["settings"]
+    response = client.post(
+        "/api/runs", headers=_token(client), data={"settings": json.dumps(settings)}
+    )
+    assert response.status_code == 202, response.text
+    failed = _wait(client, original, {"failed"})
+    assert failed["figure"] and failed["can_rework"]
+    assert client.get(manifest_url).content == manifest_before
+    assert client.get(figure_url).content == figure_before
+    _fake_tools(tmp_path)
+    response = client.post(
+        "/api/runs", headers=_token(client), data={"settings": json.dumps(settings)}
+    )
+    assert response.status_code == 202, response.text
+    assert _wait(client, original, {"completed", "failed"})["status"] == "completed"
+    assert len(client.get("/api/runs").json()) == 1
+
+
+def test_cancelled_in_place_render_keeps_previous_outputs_and_rejects_parallel_edits(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    original = _submit(client).json()["run_id"]
+    completed = _wait(client, original, {"completed", "failed"})
+    root = Path(completed["directory"])
+    manifest_before = (root / "manifest.json").read_bytes()
+    figure_before = (root / "output/pHmap.png").read_bytes()
+    _executable(
+        tmp_path,
+        "pymol",
+        r"""
+        import pathlib, sys, time
+        if sys.argv[1:] == ["--version"]:
+            print("PyMOL 3.1.0")
+            raise SystemExit(0)
+        pathlib.Path("started").touch()
+        time.sleep(30)
+    """,
+    )
+    settings = client.get(f"/api/runs/{original}/editor?operation=render").json()["settings"]
+    request = {"headers": _token(client), "data": {"settings": json.dumps(settings)}}
+    assert client.post("/api/runs", **request).status_code == 202
+    marker = root.parent / ".phmap-updates" / original / "result/work/protein-sample/ph-5/started"
+    deadline = time.monotonic() + 10
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert marker.exists()
+    progress = client.get(f"/api/runs/{original}").json()
+    assert progress["status"] == "running" and progress["cells"][0]["stage"] == "pymol"
+    assert progress["figure"] and progress["figure_revision"] == completed["figure_revision"]
+    assert client.post("/api/runs", **request).status_code == 422
+    assert client.post(f"/api/runs/{original}/cancel", headers=_token(client)).status_code == 200
+    assert _wait(client, original, {"cancelled"})["figure"]
+    assert (root / "manifest.json").read_bytes() == manifest_before
+    assert (root / "output/pHmap.png").read_bytes() == figure_before
+    assert not marker.parents[3].exists()
+
+
+def test_queued_in_place_update_can_be_cancelled_without_touching_current_files(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_id = _submit(client).json()["run_id"]
+    completed = _wait(client, source_id, {"completed", "failed"})
+    root = Path(completed["directory"])
+    before = (root / "manifest.json").read_bytes()
+    entered, release = threading.Event(), threading.Event()
+
+    def hold_worker(manager: JobManager, run_id: str) -> None:
+        entered.set()
+        assert release.wait(10)
+        with manager._condition:
+            manager._jobs[run_id]["status"] = "completed"
+            manager._save(run_id)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(JobManager, "_execute", hold_worker)
+        blocker = _submit(client).json()["run_id"]
+        assert entered.wait(2)
+        settings = client.get(f"/api/runs/{source_id}/editor").json()["settings"]
+        response = client.post(
+            "/api/runs", headers=_token(client), data={"settings": json.dumps(settings)}
+        )
+        assert response.status_code == 202, response.text
+        assert response.json()["run_id"] == source_id
+        assert client.get(f"/api/runs/{source_id}").json()["status"] == "queued"
+        assert (
+            client.post(f"/api/runs/{source_id}/cancel", headers=_token(client)).status_code == 200
+        )
+        assert _wait(client, source_id, {"cancelled"})["figure"]
+        assert (root / "manifest.json").read_bytes() == before
+        assert not (root.parent / ".phmap-updates" / source_id).exists()
+        release.set()
+        _wait(client, blocker, {"completed"})
+    retry = client.post(
+        "/api/runs", headers=_token(client), data={"settings": json.dumps(settings)}
+    )
+    assert retry.status_code == 202, retry.text
+    assert _wait(client, source_id, {"completed", "failed"})["status"] == "completed"
+
+
 def test_gui_loads_the_progress_controller_before_the_page_script(client: TestClient) -> None:
     page = client.get("/").text
     assert page.index("/static/run-selection.js") < page.index("/static/app.js")
     assert page.index("/static/protein-selection.js") < page.index("/static/app.js")
     assert page.index("/static/template-settings.js") < page.index("/static/app.js")
+    assert page.index("/static/preferences.js") < page.index("/static/app.js")
     assert client.get("/static/run-selection.js").status_code == 200
     assert client.get("/static/protein-selection.js").status_code == 200
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/static/template-settings.js").status_code == 200
+    assert client.get("/static/preferences.js").status_code == 200
     assert 'id="use-template"' in page
 
 
+def test_global_defaults_do_not_rewrite_existing_runs_or_history_editors(
+    client: TestClient,
+) -> None:
+    run_id = _submit(client).json()["run_id"]
+    completed = _wait(client, run_id, {"completed", "failed"})
+    assert completed["status"] == "completed"
+    manifest_url = f"/api/runs/{run_id}/files/manifest.json"
+    before = client.get(manifest_url).content
+    saved = client.put("/api/preferences", headers=_token(client), json={
+        "defaults": {"workers": 4, "size": 1200, "force_field": "AMBER", "font_size": 40},
+    })
+    assert saved.status_code == 200, saved.text
+    assert client.get(manifest_url).content == before
+    for suffix in ("template?edit=true", "editor?operation=render", "editor?operation=compose"):
+        settings = client.get(f"/api/runs/{run_id}/{suffix}").json()["settings"]
+        assert settings["size"] == 64
+        assert settings["force_field"] == "PARSE"
+        assert settings["font_size"] == 22
+
+
 def test_history_template_restores_inputs_settings_and_creates_a_separate_full_run(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = client.post(
-        "/api/runs", headers=_token(client),
-        data={"settings": json.dumps({
-            "name": "Original comparison", "labels": ["WT", "Variant"],
-            "ph_start": "3", "ph_stop": "4", "ph_step": "1", "size": 64,
-            "ray_trace": False, "force_field": "AMBER", "surface_mode": 4,
-            "background": "red", "foreground": "blue", "ramp_colors": ["green", "white", "orange"],
-            "font_size": 30, "show_colorbar": False, "ph_label_precision": 1,
-        })},
-        files=[("proteins", ("wt.cif", CIF)), ("proteins", ("variant.pdb", b"ATOM\n")),
-               ("view", ("view.txt", ", ".join(str(n) for n in range(18)).encode())),
-               ("ligand", ("ligand.mol2", b"shared ligand\n"))],
+        "/api/runs",
+        headers=_token(client),
+        data={
+            "settings": json.dumps(
+                {
+                    "name": "Original comparison",
+                    "labels": ["WT", "Variant"],
+                    "ph_start": "3",
+                    "ph_stop": "4",
+                    "ph_step": "1",
+                    "size": 64,
+                    "ray_trace": False,
+                    "force_field": "AMBER",
+                    "surface_mode": 4,
+                    "background": "red",
+                    "foreground": "blue",
+                    "ramp_colors": ["green", "white", "orange"],
+                    "font_size": 30,
+                    "show_colorbar": False,
+                    "ph_label_precision": 1,
+                }
+            )
+        },
+        files=[
+            ("proteins", ("wt.cif", CIF)),
+            ("proteins", ("variant.pdb", b"ATOM\n")),
+            ("view", ("view.txt", ", ".join(str(n) for n in range(18)).encode())),
+            ("ligand", ("ligand.mol2", b"shared ligand\n")),
+        ],
     )
     assert original.status_code == 202, original.text
     original_id = original.json()["run_id"]
@@ -112,12 +589,17 @@ def test_history_template_restores_inputs_settings_and_creates_a_separate_full_r
     assert settings["font_size"] == 30 and not settings["show_colorbar"]
     assert len(client.get("/api/runs").json()) == 1, "Loading must not submit a job"
     settings.update(
-        ph_mode="explicit", ph_values="7.25,4.5", labels=["Changed variant", "Changed WT"],
-        surface_mode=2, font_size=40,
+        ph_mode="explicit",
+        ph_values="7.25,4.5",
+        labels=["Changed variant", "Changed WT"],
+        surface_mode=2,
+        font_size=40,
     )
     settings["structures"].reverse()
     rerun = client.post(
-        "/api/runs", headers=_token(client), data={"settings": json.dumps(settings)},
+        "/api/runs",
+        headers=_token(client),
+        data={"settings": json.dumps(settings)},
     )
     assert rerun.status_code == 202, rerun.text
     run_id = rerun.json()["run_id"]
@@ -136,8 +618,10 @@ def test_history_template_restores_inputs_settings_and_creates_a_separate_full_r
     assert manifest["based_on"]["run_id"] == original_id
     assert manifest["based_on"]["operation"] == "full-recalculation"
     assert len(manifest["based_on"]["manifest_sha256"]) == 64
-    assert all([stage["name"] for stage in task["stages"]] == ["pdb2pqr", "apbs", "pymol"]
-               for task in manifest["tasks"])
+    assert all(
+        [stage["name"] for stage in task["stages"]] == ["pdb2pqr", "apbs", "pymol"]
+        for task in manifest["tasks"]
+    )
     assert (Path(result["directory"]) / "inputs/wt.cif").read_bytes() == CIF
     assert (Path(result["directory"]) / "inputs/wt.mol2").read_bytes() == b"shared ligand\n"
     assert client.get(manifest_url).content == original_manifest_bytes
@@ -145,18 +629,25 @@ def test_history_template_restores_inputs_settings_and_creates_a_separate_full_r
     fetch.assert_not_called()
 
 
-@pytest.mark.parametrize("settings", [
-    {"structures": [{"saved_protein_id": "wt"}]},
-    {"source_run_id": "../outside", "structures": [{"saved_protein_id": "wt"}]},
-    {"source_run_id": "source", "structures": [{"saved_protein_id": "../../secret"}]},
-    {"source_run_id": "source", "structures": [{"saved_protein_id": "wt", "pdb_id": "3SQR"}]},
-    {"reuse_view": True}, {"reuse_ligand": True},
-])
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"structures": [{"saved_protein_id": "wt"}]},
+        {"source_run_id": "../outside", "structures": [{"saved_protein_id": "wt"}]},
+        {"source_run_id": "source", "structures": [{"saved_protein_id": "../../secret"}]},
+        {"source_run_id": "source", "structures": [{"saved_protein_id": "wt", "pdb_id": "3SQR"}]},
+        {"reuse_view": True},
+        {"reuse_ligand": True},
+    ],
+)
 def test_invalid_template_references_are_rejected_without_running_tools(
-    client: TestClient, settings: dict,
+    client: TestClient,
+    settings: dict,
 ) -> None:
     response = client.post(
-        "/api/runs", headers=_token(client), data={"settings": json.dumps(settings)},
+        "/api/runs",
+        headers=_token(client),
+        data={"settings": json.dumps(settings)},
     )
     assert response.status_code == 422, response.text
     assert client.get("/api/runs").json() == []
@@ -170,7 +661,9 @@ def test_modified_source_input_cannot_be_submitted_as_a_template(client: TestCli
     path = next((Path(result["directory"]) / "inputs").glob("*.pdb"))
     path.write_bytes(b"Changed after template was loaded\n")
     response = client.post(
-        "/api/runs", headers=_token(client), data={"settings": json.dumps(template["settings"])},
+        "/api/runs",
+        headers=_token(client),
+        data={"settings": json.dumps(template["settings"])},
     )
     assert response.status_code == 422
     assert "checksum" in response.text
@@ -180,7 +673,11 @@ def test_modified_source_input_cannot_be_submitted_as_a_template(client: TestCli
 
 def test_non_aligned_range_survives_a_completed_gui_run(client: TestClient) -> None:
     submitted = _submit(
-        client, ph_mode="range", ph_start="3", ph_stop="8", ph_step="2",
+        client,
+        ph_mode="range",
+        ph_start="3",
+        ph_stop="8",
+        ph_step="2",
     )
     assert submitted.status_code == 202, submitted.text
     run_id = submitted.json()["run_id"]
@@ -192,8 +689,11 @@ def test_non_aligned_range_survives_a_completed_gui_run(client: TestClient) -> N
     assert (settings["ph_start"], settings["ph_stop"], settings["ph_step"]) == ("3", "8", "2")
 
 
+@pytest.mark.parametrize("edit", [False, True])
 def test_cancelled_queued_job_can_restore_and_rerun_its_prepared_setup(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    edit: bool,
 ) -> None:
     entered, release = threading.Event(), threading.Event()
     execute = JobManager._execute
@@ -210,14 +710,27 @@ def test_cancelled_queued_job_can_restore_and_rerun_its_prepared_setup(
         assert _submit(client).status_code == 202
         assert entered.wait(2)
         queued = client.post(
-            "/api/runs", headers=_token(client),
-            data={"settings": json.dumps({
-                "ph_mode": "range", "ph_start": "3", "ph_stop": "8", "ph_step": "2",
-                "force_field": "AMBER", "font_size": 34, "size": 64, "ray_trace": False,
-            })},
-            files=[("proteins", ("protein.pdb", b"ATOM\n")),
-                   ("ligand", ("ligand.mol2", b"ligand contents\n")),
-                   ("view", ("view.txt", ", ".join(str(n) for n in range(18)).encode()))],
+            "/api/runs",
+            headers=_token(client),
+            data={
+                "settings": json.dumps(
+                    {
+                        "ph_mode": "range",
+                        "ph_start": "3",
+                        "ph_stop": "8",
+                        "ph_step": "2",
+                        "force_field": "AMBER",
+                        "font_size": 34,
+                        "size": 64,
+                        "ray_trace": False,
+                    }
+                )
+            },
+            files=[
+                ("proteins", ("protein.pdb", b"ATOM\n")),
+                ("ligand", ("ligand.mol2", b"ligand contents\n")),
+                ("view", ("view.txt", ", ".join(str(n) for n in range(18)).encode())),
+            ],
         )
         assert queued.status_code == 202, queued.text
         source_id = queued.json()["run_id"]
@@ -226,16 +739,21 @@ def test_cancelled_queued_job_can_restore_and_rerun_its_prepared_setup(
         assert cancelled.json()["status"] == "cancelled"
         assert cancelled.json()["can_template"] is True
         assert not Path(cancelled.json()["directory"]).exists()
-        template = client.get(f"/api/runs/{source_id}/template")
+        original_snapshot = client.app.state.jobs.load_template(source_id).input_root
+        template = client.get(f"/api/runs/{source_id}/template", params={"edit": edit})
         assert template.status_code == 200, template.text
         settings = template.json()["settings"]
         assert settings["force_field"] == "AMBER" and settings["font_size"] == 34
         assert (settings["ph_start"], settings["ph_stop"], settings["ph_step"]) == ("3", "8", "2")
         assert settings["reuse_view"] and settings["reuse_ligand"]
         rerun = client.post(
-            "/api/runs", headers=_token(client), data={"settings": json.dumps(settings)},
+            "/api/runs",
+            headers=_token(client),
+            data={"settings": json.dumps(settings)},
         )
         assert rerun.status_code == 202, rerun.text
+        assert (rerun.json()["run_id"] == source_id) is edit
+        assert original_snapshot.exists() is not edit
         monkeypatch.setattr(JobManager, "_execute", execute)
         release.set()
         result = _wait(client, rerun.json()["run_id"], {"completed", "failed"})
@@ -285,8 +803,10 @@ def test_gui_advanced_settings_reach_validation_worker_manifest_and_script(
     client: TestClient,
 ) -> None:
     settings = {
-        "surface_mode": 4, "surface_solvent": True,
-        "surface_ramp_above_mode": False, "ligand_representation": None,
+        "surface_mode": 4,
+        "surface_solvent": True,
+        "surface_ramp_above_mode": False,
+        "ligand_representation": None,
     }
     validation = _submit(client, endpoint="/api/validate", **settings)
     assert validation.status_code == 200, validation.text
@@ -308,8 +828,13 @@ def test_gui_advanced_settings_reach_validation_worker_manifest_and_script(
 
 def test_gui_publication_settings_reach_validation_worker_and_manifest(client: TestClient) -> None:
     styles = {
-        "font_size": 34, "outer_margin": 0, "column_gap": 27, "row_gap": 39,
-        "label_gap": 10, "show_colorbar": False, "ph_label_precision": 1,
+        "font_size": 34,
+        "outer_margin": 0,
+        "column_gap": 27,
+        "row_gap": 39,
+        "label_gap": 10,
+        "show_colorbar": False,
+        "ph_label_precision": 1,
         "foreground": "#555555",
     }
     validation = _submit(client, endpoint="/api/validate", ph_values="5.125,7.5", **styles)
@@ -329,19 +854,32 @@ def test_gui_publication_settings_reach_validation_worker_and_manifest(client: T
         assert f"--with-ph={task['ph']}" in task["stages"][0]["argv"]
 
 
-@pytest.mark.parametrize("settings", [
-    {"font_size": 0}, {"font_size": 257}, {"font_size": True},
-    {"row_gap": -1}, {"column_gap": 1025}, {"outer_margin": 1.5}, {"label_gap": -1},
-    {"show_colorbar": "false"}, {"ph_label_precision": 1.5}, {"ph_label_precision": True},
-    {"ph_mode": "explicit", "ph_values": "5.11,5.14", "ph_label_precision": 1},
-])
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"font_size": 0},
+        {"font_size": 257},
+        {"font_size": True},
+        {"row_gap": -1},
+        {"column_gap": 1025},
+        {"outer_margin": 1.5},
+        {"label_gap": -1},
+        {"show_colorbar": "false"},
+        {"ph_label_precision": 1.5},
+        {"ph_label_precision": True},
+        {"ph_mode": "explicit", "ph_values": "5.11,5.14", "ph_label_precision": 1},
+    ],
+)
 def test_gui_rejects_invalid_publication_settings_before_fetching(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, settings: dict,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: dict,
 ) -> None:
     fetch = Mock(side_effect=AssertionError("Must not fetch"))
     monkeypatch.setattr("phmap.gui.app.fetch_structure", fetch)
     response = client.post(
-        "/api/runs", headers=_token(client),
+        "/api/runs",
+        headers=_token(client),
         data={"settings": json.dumps({"structures": [{"pdb_id": "3SQR"}], **settings})},
     )
     assert response.status_code == 422, response.text
@@ -349,19 +887,30 @@ def test_gui_rejects_invalid_publication_settings_before_fetching(
     assert client.get("/api/runs").json() == []
 
 
-@pytest.mark.parametrize("settings", [
-    {"surface_mode": -1}, {"surface_mode": 5}, {"surface_mode": 1.5},
-    {"surface_mode": True}, {"surface_solvent": "false"}, {"surface_solvent": 1},
-    {"surface_ramp_above_mode": "off"}, {"ligand_representation": "sticks; quit"},
-    {"ligand_representation": "none"},
-])
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"surface_mode": -1},
+        {"surface_mode": 5},
+        {"surface_mode": 1.5},
+        {"surface_mode": True},
+        {"surface_solvent": "false"},
+        {"surface_solvent": 1},
+        {"surface_ramp_above_mode": "off"},
+        {"ligand_representation": "sticks; quit"},
+        {"ligand_representation": "none"},
+    ],
+)
 def test_gui_rejects_invalid_advanced_settings_before_fetching_or_queueing(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, settings: dict,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    settings: dict,
 ) -> None:
     fetch = Mock(side_effect=AssertionError("Must not fetch"))
     monkeypatch.setattr("phmap.gui.app.fetch_structure", fetch)
     response = client.post(
-        "/api/runs", headers=_token(client),
+        "/api/runs",
+        headers=_token(client),
         data={"settings": json.dumps({"structures": [{"pdb_id": "3SQR"}], **settings})},
     )
     assert response.status_code == 422, response.text
@@ -374,16 +923,22 @@ def test_gui_rejects_cross_origin_writes_invalid_settings_and_camera(
 ) -> None:
     assert client.post("/api/runs").status_code == 403
     assert client.get("/api/runs", headers={"Host": "evil.example"}).status_code == 400
-    assert client.post(
-        "/api/runs", headers={**_token(client), "Origin": "https://evil.example"}
-    ).status_code == 403
+    assert (
+        client.post(
+            "/api/runs", headers={**_token(client), "Origin": "https://evil.example"}
+        ).status_code
+        == 403
+    )
     assert _submit(client, ph_values="7,7.0").status_code == 422
     assert _submit(client, level=float("nan")).status_code == 422
     assert _submit(client, background="white; quit").status_code == 422
     response = client.post(
-        "/api/runs", headers=_token(client),
-        files=[("proteins", ("protein.pdb", b"ATOM\n")),
-               ("view", ("view.txt", b"set_view (0); quit"))],
+        "/api/runs",
+        headers=_token(client),
+        files=[
+            ("proteins", ("protein.pdb", b"ATOM\n")),
+            ("view", ("view.txt", b"set_view (0); quit")),
+        ],
     )
     assert response.status_code == 422
     assert client.get("/api/runs").json() == []
@@ -391,11 +946,14 @@ def test_gui_rejects_cross_origin_writes_invalid_settings_and_camera(
 
 def test_multiple_uploads_keep_selected_order_and_labels(client: TestClient) -> None:
     response = client.post(
-        "/api/validate", headers=_token(client),
-        data={"settings": json.dumps({"labels": ["Mutant", "Wild type"],
-                                      "ph_start": "3", "ph_stop": "8", "ph_step": "1"})},
-        files=[("proteins", ("mutant.pdb", b"ATOM\n")),
-               ("proteins", ("protein.pdb", b"ATOM\n"))],
+        "/api/validate",
+        headers=_token(client),
+        data={
+            "settings": json.dumps(
+                {"labels": ["Mutant", "Wild type"], "ph_start": "3", "ph_stop": "8", "ph_step": "1"}
+            )
+        },
+        files=[("proteins", ("mutant.pdb", b"ATOM\n")), ("proteins", ("protein.pdb", b"ATOM\n"))],
     )
     assert response.status_code == 200, response.text
     data = response.json()
@@ -405,16 +963,22 @@ def test_multiple_uploads_keep_selected_order_and_labels(client: TestClient) -> 
 
 
 def test_pdb_id_fetch_is_protected_and_returns_mmcif_provenance(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     opener = Mock()
     opener.open.side_effect = lambda *args, **kwargs: StructureResponse()
     monkeypatch.setattr("phmap.structures.urllib.request.build_opener", lambda *_: opener)
     assert client.post("/api/structures/fetch", json={"pdb_id": "3sqr"}).status_code == 403
     headers = _token(client)
-    assert client.post(
-        "/api/structures/fetch", headers=headers, json={"pdb_id": "https://evil.example"},
-    ).status_code == 422
+    assert (
+        client.post(
+            "/api/structures/fetch",
+            headers=headers,
+            json={"pdb_id": "https://evil.example"},
+        ).status_code
+        == 422
+    )
     opener.open.assert_not_called()
     response = client.post("/api/structures/fetch", headers=headers, json={"pdb_id": "3sqr"})
     assert response.status_code == 200, response.text
@@ -426,20 +990,28 @@ def test_pdb_id_fetch_is_protected_and_returns_mmcif_provenance(
 
 
 def test_gui_mixes_fetched_reference_and_local_variants_in_explicit_row_order(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     opener = Mock()
     opener.open.side_effect = lambda *args, **kwargs: StructureResponse()
     monkeypatch.setattr("phmap.structures.urllib.request.build_opener", lambda *_: opener)
     response = client.post(
-        "/api/runs", headers=_token(client),
-        data={"settings": json.dumps({
-            "ph_mode": "explicit", "ph_values": "7", "size": 64, "ray_trace": False,
-            "labels": ["Variant 2", "WT", "Variant 1"],
-            "structures": [{"upload_index": 1}, {"pdb_id": "3sqr"}, {"upload_index": 0}],
-        })},
-        files=[("proteins", ("variant1.pdb", b"ATOM\n")),
-               ("proteins", ("variant2.MMCIF", CIF))],
+        "/api/runs",
+        headers=_token(client),
+        data={
+            "settings": json.dumps(
+                {
+                    "ph_mode": "explicit",
+                    "ph_values": "7",
+                    "size": 64,
+                    "ray_trace": False,
+                    "labels": ["Variant 2", "WT", "Variant 1"],
+                    "structures": [{"upload_index": 1}, {"pdb_id": "3sqr"}, {"upload_index": 0}],
+                }
+            )
+        },
+        files=[("proteins", ("variant1.pdb", b"ATOM\n")), ("proteins", ("variant2.MMCIF", CIF))],
     )
     assert response.status_code == 202, response.text
     run_id = response.json()["run_id"]
@@ -448,7 +1020,9 @@ def test_gui_mixes_fetched_reference_and_local_variants_in_explicit_row_order(
     assert [row["protein"] for row in run["cells"]] == ["Variant 2", "WT", "Variant 1"]
     manifest = client.get(f"/api/runs/{run_id}/files/manifest.json").json()
     assert [p["format"] for p in manifest["configuration"]["proteins"]] == [
-        "mmcif", "mmcif", "pdb",
+        "mmcif",
+        "mmcif",
+        "pdb",
     ]
     reference = next(entry for entry in manifest["inputs"] if entry.get("source"))
     assert reference["source"]["pdb_id"] == "3SQR"
@@ -458,25 +1032,35 @@ def test_gui_mixes_fetched_reference_and_local_variants_in_explicit_row_order(
 
 
 def test_gui_supports_pdb_id_without_any_uploads(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     opener = Mock()
     opener.open.side_effect = lambda *args, **kwargs: StructureResponse()
     monkeypatch.setattr("phmap.structures.urllib.request.build_opener", lambda *_: opener)
     response = client.post(
-        "/api/validate", headers=_token(client),
+        "/api/validate",
+        headers=_token(client),
         data={"settings": json.dumps({"structures": [{"pdb_id": "3sqr"}]})},
     )
     assert response.status_code == 200, response.text
     assert response.json()["total"] == 6
 
 
-@pytest.mark.parametrize("structures", [
-    [{"upload_index": 0}, {"upload_index": 0}], [{"upload_index": 1}],
-    [{"pdb_id": "3sqr", "upload_index": 0}], [{}], [{"pdb_id": "../3sqr"}],
-])
+@pytest.mark.parametrize(
+    "structures",
+    [
+        [{"upload_index": 0}, {"upload_index": 0}],
+        [{"upload_index": 1}],
+        [{"pdb_id": "3sqr", "upload_index": 0}],
+        [{}],
+        [{"pdb_id": "../3sqr"}],
+    ],
+)
 def test_gui_rejects_ambiguous_or_invalid_structure_rows(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, structures: list[dict],
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    structures: list[dict],
 ) -> None:
     fetch = Mock(side_effect=AssertionError("Invalid rows must not download anything"))
     monkeypatch.setattr("phmap.gui.app.fetch_structure", fetch)
@@ -485,15 +1069,22 @@ def test_gui_rejects_ambiguous_or_invalid_structure_rows(
 
 
 def test_gui_returns_clear_not_found_status_for_missing_pdb_entries(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     opener = Mock()
     opener.open.side_effect = urllib.error.HTTPError(
-        "https://files.rcsb.org", 404, "Missing", {}, None,
+        "https://files.rcsb.org",
+        404,
+        "Missing",
+        {},
+        None,
     )
     monkeypatch.setattr("phmap.structures.urllib.request.build_opener", lambda *_: opener)
     response = client.post(
-        "/api/structures/fetch", headers=_token(client), json={"pdb_id": "9zzz"},
+        "/api/structures/fetch",
+        headers=_token(client),
+        json={"pdb_id": "9zzz"},
     )
     assert response.status_code == 404
     assert "not found" in response.json()["detail"]
@@ -501,7 +1092,9 @@ def test_gui_returns_clear_not_found_status_for_missing_pdb_entries(
 
 @pytest.mark.parametrize("invalid", ["label", "count", "view", "cif"])
 def test_gui_preflights_local_inputs_before_fetching_remote_rows(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, invalid: str,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: str,
 ) -> None:
     fetch = Mock(side_effect=AssertionError("Invalid selections must not download"))
     monkeypatch.setattr("phmap.gui.app.fetch_structure", fetch)
@@ -516,23 +1109,31 @@ def test_gui_preflights_local_inputs_before_fetching_remote_rows(
     else:
         files = [("proteins", ("variant.cif", b"not mmcif"))]
     response = client.post(
-        "/api/validate", headers=_token(client),
-        data={"settings": json.dumps(settings)}, files=files,
+        "/api/validate",
+        headers=_token(client),
+        data={"settings": json.dumps(settings)},
+        files=files,
     )
     assert response.status_code == 422, response.text
     fetch.assert_not_called()
 
 
 def test_cli_run_history_is_visible_and_artifact_paths_are_contained(
-    client: TestClient, tmp_path: Path,
+    client: TestClient,
+    tmp_path: Path,
 ) -> None:
     root = tmp_path / "runs" / "cli-smoke"
     root.mkdir()
-    write_json(root / "manifest.json", {
-        "run_id": "cli-smoke", "status": "completed", "created_at": "2026-01-01T00:00:00Z",
-        "configuration": {"proteins": [{"id": "wt", "label": "WT"}], "ph_values": ["5"]},
-        "tasks": [{"protein_id": "wt", "ph": "5", "status": "completed", "stages": []}],
-    })
+    write_json(
+        root / "manifest.json",
+        {
+            "run_id": "cli-smoke",
+            "status": "completed",
+            "created_at": "2026-01-01T00:00:00Z",
+            "configuration": {"proteins": [{"id": "wt", "label": "WT"}], "ph_values": ["5"]},
+            "tasks": [{"protein_id": "wt", "ph": "5", "status": "completed", "stages": []}],
+        },
+    )
     outside = tmp_path / "secret.log"
     outside.write_text("private", encoding="utf-8")
     (root / "escaped.log").symlink_to(outside)
@@ -546,10 +1147,18 @@ def test_cli_run_history_is_visible_and_artifact_paths_are_contained(
     assert client.post("/api/runs/cli-smoke/cancel", headers=_token(client)).status_code == 409
 
 
+@pytest.mark.parametrize("workers", [1, 2])
 def test_cancel_active_and_queued_jobs_preserves_artifacts(
-    client: TestClient, tmp_path: Path,
+    client: TestClient,
+    tmp_path: Path,
+    workers: int,
 ) -> None:
-    _executable(tmp_path, "apbs", r'''
+    if available_cpus() < workers:
+        pytest.skip("Parallel cancellation needs at least two available CPUs")
+    _executable(
+        tmp_path,
+        "apbs",
+        r"""
         import pathlib
         import sys
         import time
@@ -558,13 +1167,17 @@ def test_cancel_active_and_queued_jobs_preserves_artifacts(
             raise SystemExit(0)
         pathlib.Path("started").touch()
         time.sleep(30)
-    ''')
-    first = _submit(client).json()["run_id"]
+    """,
+    )
+    first = _submit(client, workers=workers).json()["run_id"]
     started = tmp_path / "runs" / first / "work" / "protein-sample" / "ph-5" / "started"
+    markers = [started]
+    if workers == 2:
+        markers.append(started.parent.parent / "ph-7" / "started")
     deadline = time.monotonic() + 10
-    while not started.exists() and time.monotonic() < deadline:
+    while not all(marker.exists() for marker in markers) and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert started.exists()
+    assert all(marker.exists() for marker in markers)
     active = client.get(f"/api/runs/{first}").json()
     assert active["cells"][0]["stage"] == "apbs"
     second = _submit(client).json()["run_id"]
@@ -582,14 +1195,22 @@ def test_cancel_active_and_queued_jobs_preserves_artifacts(
     assert manifest["tasks"][0]["status"] == "cancelled"
     assert manifest["tasks"][0]["stages"][-1]["name"] == "apbs"
     assert manifest["tasks"][0]["stages"][-1]["status"] == "cancelled"
+    assert all(task["status"] == "cancelled" for task in manifest["tasks"])
+    if workers == 2:
+        assert all(task["stages"][-1]["status"] == "cancelled" for task in manifest["tasks"])
 
 
 def test_queue_restart_marks_abandoned_job_interrupted(tmp_path: Path) -> None:
     records = tmp_path / "runs" / ".gui" / "jobs"
     records.mkdir(parents=True)
-    write_json(records / "old-run.json", {
-        "run_id": "old-run", "status": "running", "configuration": {},
-    })
+    write_json(
+        records / "old-run.json",
+        {
+            "run_id": "old-run",
+            "status": "running",
+            "configuration": {},
+        },
+    )
     manager = JobManager(tmp_path / "runs")
     manager.start()
     try:

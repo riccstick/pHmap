@@ -3,13 +3,30 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from threading import RLock
+from typing import Any, Concatenate, ParamSpec, TypeVar
 
 from phmap.json_state import write_json
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+
+def _synchronized(
+    method: Callable[Concatenate[RunManifest, _P], _T],
+) -> Callable[Concatenate[RunManifest, _P], _T]:
+    @wraps(method)
+    def locked(self: RunManifest, /, *args: _P.args, **kwargs: _P.kwargs) -> _T:
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return locked
 
 
 def utc_now() -> str:
@@ -29,7 +46,10 @@ def sha256_file(path: Path) -> str:
 
 
 def finish_task_state(
-    task: dict[str, Any], status: str, *, error: str | None = None,
+    task: dict[str, Any],
+    status: str,
+    *,
+    error: str | None = None,
 ) -> None:
     """Apply terminal state consistently, including an unfinished active stage."""
 
@@ -51,6 +71,7 @@ class RunManifest:
     path: Path
     run_id: str
     data: dict[str, Any] = field(init=False)
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.data = {
@@ -67,30 +88,40 @@ class RunManifest:
         }
         self.write()
 
+    @_synchronized
     def write(self) -> None:
         """Atomically write the current manifest."""
 
         self.data["updated_at"] = utc_now()
         write_json(self.path, self.data, sort_keys=True)
 
+    @_synchronized
     def set_status(self, status: str, *, error: str | None = None) -> None:
         self.data["status"] = status
         if error is not None:
             self.data["error"] = error
-        if status in {"completed", "failed"}:
+        if status in {"completed", "failed", "cancelled", "interrupted"}:
             self.data["finished_at"] = utc_now()
         self.write()
 
+    @_synchronized
     def set_configuration(self, configuration: dict[str, Any]) -> None:
         self.data["configuration"] = configuration
         self.write()
 
+    @_synchronized
     def record_tool(self, name: str, details: dict[str, Any]) -> None:
         self.data["tools"][name] = details
         self.write()
 
+    @_synchronized
     def record_input(
-        self, role: str, original: Path, staged: Path, *, source: dict[str, Any] | None = None,
+        self,
+        role: str,
+        original: Path,
+        staged: Path,
+        *,
+        source: dict[str, Any] | None = None,
         preparation: dict[str, str] | None = None,
     ) -> None:
         digest = sha256_file(staged)
@@ -109,19 +140,60 @@ class RunManifest:
         )
         self.write()
 
-    def start_task(self, task_id: str, protein_id: str, ph: Decimal) -> dict[str, Any]:
-        task = {
-            "task_id": task_id,
-            "protein_id": protein_id,
-            "ph": str(ph),
-            "status": "running",
-            "started_at": utc_now(),
-            "stages": [],
-        }
-        self.data["tasks"].append(task)
+    @_synchronized
+    def prepare_tasks(self, cells: Sequence[tuple[str, Decimal]]) -> None:
+        self.data["tasks"] = [
+            {
+                "task_id": f"{protein}@{ph}",
+                "protein_id": protein,
+                "ph": str(ph),
+                "status": "pending",
+                "stages": [],
+            }
+            for protein, ph in cells
+        ]
+        self.write()
+
+    @_synchronized
+    def cancel_unfinished(self) -> None:
+        """Finalize unfinished tasks after the cell scheduler has drained."""
+
+        for task in self.data["tasks"]:
+            if task["status"] in {"pending", "running"}:
+                finish_task_state(
+                    task, "cancelled", error="Calculation stopped before this cell finished"
+                )
+        self.write()
+
+    @_synchronized
+    def start_task(
+        self,
+        task_id: str,
+        protein_id: str,
+        ph: Decimal,
+        *,
+        metrics: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        task = next((task for task in self.data["tasks"] if task["task_id"] == task_id), None)
+        if task is None:
+            task = {}
+            self.data["tasks"].append(task)
+        task.update(
+            {
+                "task_id": task_id,
+                "protein_id": protein_id,
+                "ph": str(ph),
+                "status": "running",
+                "started_at": utc_now(),
+                "stages": [],
+            }
+        )
+        if metrics is not None:
+            task["scientific_metrics"] = metrics
         self.write()
         return task
 
+    @_synchronized
     def record_stage(self, task: dict[str, Any], stage: dict[str, Any]) -> None:
         if (
             task["stages"]
@@ -133,6 +205,7 @@ class RunManifest:
             task["stages"].append(stage)
         self.write()
 
+    @_synchronized
     def start_stage(self, task: dict[str, Any], name: str) -> None:
         """Expose the active stage to CLI and GUI progress readers."""
 
@@ -140,10 +213,12 @@ class RunManifest:
         task["stages"].append({"name": name, "status": "running", "started_at": utc_now()})
         self.write()
 
+    @_synchronized
     def finish_task(self, task: dict[str, Any], status: str, *, error: str | None = None) -> None:
         finish_task_state(task, status, error=error)
         self.write()
 
+    @_synchronized
     def record_output(self, role: str, path: Path) -> None:
         self.data["outputs"].append(
             {

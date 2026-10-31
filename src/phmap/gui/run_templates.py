@@ -50,7 +50,11 @@ class SavedInput:
 
 class RunTemplate:
     def __init__(
-        self, root: Path, *, submission_path: Path | None = None, input_root: Path | None = None,
+        self,
+        root: Path,
+        *,
+        submission_path: Path | None = None,
+        input_root: Path | None = None,
     ) -> None:
         self.root = root.resolve()
         metadata = self.root / "manifest.json" if submission_path is None else submission_path
@@ -64,7 +68,8 @@ class RunTemplate:
             raise ConfigurationError("Wait for the source calculation to finish before copying it")
         digest_key = "manifest_sha256" if submission_path is None else "submission_sha256"
         self.based_on = {
-            "run_id": self.root.name, "operation": "full-recalculation",
+            "run_id": self.root.name,
+            "operation": "full-recalculation",
             digest_key: sha256_file(metadata),
         }
         self.configuration = self.manifest["configuration"]
@@ -119,34 +124,47 @@ class RunTemplate:
             raise ConfigurationError("The saved shared ligand must be a MOL2 file")
         return ligands[0]
 
-    def response(self, *, name: str) -> dict[str, Any]:
+    def response(self, *, name: str, verify_inputs: bool = True) -> dict[str, Any]:
         config = self.configuration
         proteins = config["proteins"]
         if not 1 <= len(proteins) <= 32:
             raise ConfigurationError("This run exceeds the GUI's 32-protein limit")
-        saved = [self.protein(item["id"]) for item in proteins]
-        view, ligand = self.view(), self.ligand()
+        saved = [self.protein(item["id"]) for item in proteins] if verify_inputs else []
+        view = self.view()
+        has_ligand = (
+            self.ligand() is not None
+            if verify_inputs
+            else any(item.get("ligand") is not None for item in proteins)
+        )
         render = config.get("render", {})
         composition = config.get("composition", {})
         fields = {
-            key: value for key, value in render.items()
+            key: value
+            for key, value in render.items()
             if key in RunSettings.model_fields and key not in {"foreground", "background"}
         }
         fields["level"] = render.get("potential_level", 5.0)
-        fields.update({key: value for key, value in composition.items()
-                       if key in RunSettings.model_fields})
-        fields["background"] = render.get("background")
-        fields["foreground"] = render.get("foreground", "black")
+        fields.update(
+            {key: value for key, value in composition.items() if key in RunSettings.model_fields}
+        )
+        fields["background"] = composition.get("background", render.get("background"))
+        fields["foreground"] = composition.get("foreground", render.get("foreground", "black"))
         fields["force_field"] = str(
             config.get("scientific", {}).get("force_field", "PARSE"),
         ).upper()
+        if "workers" in config.get("execution", {}):
+            fields["workers"] = config["execution"]["workers"]
         numbers = parse_ph_values(config["ph_values"])
         values = [str(value) for value in numbers]
         fields.update(
-            name=(name[:113] + " (copy)"), ph_mode="explicit", ph_values=", ".join(values),
-            labels=[item["label"] for item in proteins], source_run_id=self.root.name,
+            name=(name[:113] + " (copy)"),
+            ph_mode="explicit",
+            ph_values=", ".join(values),
+            labels=[item["label"] for item in proteins],
+            source_run_id=self.root.name,
             structures=[{"saved_protein_id": item["id"]} for item in proteins],
-            reuse_view=view is not None, reuse_ligand=ligand is not None,
+            reuse_view=view is not None,
+            reuse_ligand=has_ligand,
         )
         saved_range = config.get("ph_range")
         if config.get("ph_mode") == "range" and saved_range is not None:
@@ -154,7 +172,10 @@ class RunTemplate:
             if parse_ph_range(triple).values() != numbers:
                 raise ConfigurationError("Saved pH range does not match the calculation values")
             fields.update(
-                ph_mode="range", ph_start=triple[0], ph_stop=triple[1], ph_step=triple[2],
+                ph_mode="range",
+                ph_start=triple[0],
+                ph_stop=triple[1],
+                ph_step=triple[2],
             )
         try:
             settings = RunSettings.model_validate(fields)
@@ -166,7 +187,14 @@ class RunTemplate:
             ) from exc
         return {
             "settings": settings.model_dump(),
-            "proteins": [{"id": item["id"], "label": item["label"], "filename": file.path.name}
-                         for item, file in zip(proteins, saved, strict=True)],
-            "has_view": view is not None, "has_ligand": ligand is not None,
+            "proteins": [
+                {
+                    "id": item["id"],
+                    "label": item["label"],
+                    "filename": saved[index].path.name if verify_inputs else item["id"],
+                }
+                for index, item in enumerate(proteins)
+            ],
+            "has_view": view is not None,
+            "has_ligand": has_ligand,
         }
