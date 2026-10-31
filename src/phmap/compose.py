@@ -236,8 +236,9 @@ def compose_grid(
         scratch_draw = ImageDraw.Draw(scratch)
         row_text = [_text_size(scratch_draw, label, font) for _, label in protein_order]
         ph_text = [_text_size(scratch_draw, label, font) for label in ph_labels]
+        ph_axis_text = _text_size(scratch_draw, "pH", font)
         legend_text = [_text_size(scratch_draw, label, font) for label in _legend_labels(settings)]
-    label_width = max(width for width, _ in row_text)
+    label_width = max(ph_axis_text[0], max(width for width, _ in row_text))
     # Grow cells to fit text, but never rescale the scientific render tiles.
     cell_width = max(tile_width, max(width for width, _ in ph_text))
     cell_height = max(tile_height, max(height for _, height in row_text))
@@ -256,7 +257,7 @@ def compose_grid(
     left_margin = settings.outer_margin + label_width + settings.label_gap
     grid_left = left_margin + (content_width - grid_width) // 2
     labels_y = settings.outer_margin + grid_height + settings.label_gap
-    ph_height = max(height for _, height in ph_text)
+    ph_height = max(ph_axis_text[1], max(height for _, height in ph_text))
     canvas_width = left_margin + content_width + settings.outer_margin
     canvas_height = labels_y + ph_height + legend_height + settings.outer_margin
     if canvas_width * canvas_height > MAX_COMPOSITION_PIXELS:
@@ -286,6 +287,8 @@ def compose_grid(
                 except (OSError, ValueError, Image.DecompressionBombError) as exc:
                     raise ArtifactError(f"Could not read rendered tile {path}: {exc}") from exc
 
+        _draw_text(draw, (grid_left - settings.label_gap - ph_axis_text[0], labels_y),
+                   "pH", font, settings.foreground)
         for column, label in enumerate(ph_labels):
             x = grid_left + column * (cell_width + settings.column_gap)
             _draw_text(draw, (x + (cell_width - ph_text[column][0]) // 2, labels_y),

@@ -28,6 +28,16 @@ let preferences = JSON.parse($("preferences-data").textContent);
 let preferencesBusy = false;
 let preferencesLoading = false;
 let firstLaunchSetup = false;
+let calculationLoadFailed = false;
+let calculationOpener = null;
+const workspaceNotice = new WorkspaceNotice({
+  root: $("workspace-message"), terminal,
+  onDismiss: () => {
+    if (document.activeElement?.matches("[data-notice-dismiss]")) {
+      $(selected && !$("run-detail").hidden ? "run-title" : "new-run").focus({ preventScroll: true });
+    }
+  },
+});
 const wizard = new CalculationWizard(renderWizard, validateWizardStep);
 const selection = new RunSelection({
   load: (runId, options) => api(`/api/runs/${encodeURIComponent(runId)}`, options),
@@ -71,17 +81,30 @@ async function api(url, options = {}) {
 }
 
 function message(text, error = false) {
+  const inDialog = $("calculation-dialog").open;
+  if (!inDialog) {
+    $("form-message").hidden = true;
+    workspaceNotice.message(text, error);
+    return;
+  }
   const element = $("form-message");
   element.textContent = text;
-  element.className = error ? "error" : "success";
+  element.className = error ? "message error" : "message success";
   element.hidden = !text;
+  element.setAttribute("role", error ? "alert" : "status");
+  if (error && text) {
+    element.tabIndex = -1;
+    element.focus({ preventScroll: true });
+    element.scrollIntoView({ block: "nearest" });
+  }
 }
 
 function updateButtons() {
   const loading = templateAbort !== null;
-  const failed = typeof document !== "undefined" && document.documentElement?.dataset.phmapFailed === "true";
+  const failed = calculationLoadFailed || (typeof document !== "undefined" && document.documentElement?.dataset.phmapFailed === "true");
   $("submit").disabled = failed || busy || fetching || loading || editingRunning || !proteins.length || !requiredToolsReady();
   $("validate").disabled = failed || busy || fetching || loading || !proteins.length;
+  $("calculation-tools-warning").hidden = requiredToolsReady();
   $("fetch-pdb").disabled = busy || fetching || loading || operation !== "full";
   $("fetch-pdb").textContent = fetching ? "Fetching…" : "Add PDB entry";
   $("proteins").disabled = busy || loading || operation !== "full";
@@ -89,10 +112,12 @@ function updateButtons() {
   $("use-template").textContent = loading ? "Loading setup…" : "Duplicate calculation";
   $("edit-calculation").disabled = busy || fetching || loading || !selectedCanTemplate;
   $("run-form").inert = failed || loading;
+  $("run-form").hidden = calculationLoadFailed || loading;
   $("edit-figure").disabled = busy || fetching || loading || !selectedCanRework;
   $("rerender").disabled = $("edit-figure").disabled;
   $("new-run").disabled = failed || busy;
-  $("done-editing").disabled = busy || loading || editingRunning;
+  $("done-editing").disabled = busy;
+  $("close-calculation").disabled = busy;
   $("submit").textContent = busy ? "Submitting…" : editingRunning ? "Updating calculation…"
     : operation === "compose" ? "Update figure →"
     : operation === "render" ? "Update surface renders →"
@@ -319,9 +344,12 @@ async function send(validateOnly) {
       editingRunning = true;
       watchEditingRun(result.run_id);
       syncSavedInputs();
-      message("Calculation queued. Further changes will update this calculation. New calculation starts a separate one.");
+      closeCalculationDialog(true);
+      workspaceNotice.track(result.run_id, operation);
       await refreshHistory();
       await selectRun(result.run_id);
+      $("run-title").focus({ preventScroll: true });
+      $("run-detail").scrollIntoView({ behavior: "smooth", block: "start" });
     }
   } catch (error) {
     message(error.message, true);
@@ -362,6 +390,7 @@ async function checkTools() {
   } finally {
     $("recheck-tools").disabled = false;
     updateButtons();
+    artifactEditor.updateButtons();
   }
 }
 
@@ -464,6 +493,7 @@ function renderFigureKey(run) {
 
 function renderRun(run) {
   if (selected !== run.run_id) return;
+  workspaceNotice.observe(run);
   selectedStatus = run.status;
   selectedCanTemplate = Boolean(run.can_template);
   selectedCanRework = Boolean(run.can_rework);
@@ -555,6 +585,7 @@ function renderRun(run) {
 async function selectRun(runId) {
   cancelTemplateLoad();
   hideRunActionHelp();
+  workspaceNotice.select(runId);
   selected = runId;
   selectedStatus = null;
   selectedCanTemplate = false;
@@ -585,10 +616,10 @@ function syncSavedInputs() {
   $("template-source").textContent = templateSource || "";
   $("template-action").textContent = updateInPlace ? "Editing calculation" : "Duplicating calculation";
   $("template-behavior").textContent = updateInPlace
-    ? "Updates replace this calculation's current result after success. No previous versions are kept."
-    : "Starting creates a separate calculation.";
-  $("setup-title").textContent = updateInPlace ? "Edit this calculation" : "Set up a calculation";
-  $("done-editing").hidden = !updateInPlace;
+    ? "Replaces this result after success. No version history."
+    : "Creates a separate calculation.";
+  $("setup-title").textContent = updateInPlace ? "Edit calculation" : templateSource ? "Duplicate calculation" : "New calculation";
+  $("done-editing").hidden = false;
   $("saved-view").hidden = !reuseView;
   $("saved-ligand").hidden = !reuseLigand;
 }
@@ -657,6 +688,7 @@ async function useTemplate() {
   const runId = selected;
   const controller = new AbortController();
   templateAbort = controller;
+  openCalculationDialog($("use-template"), "Duplicate calculation");
   updateButtons();
   message("Loading the saved settings and checking input files…");
   try {
@@ -666,30 +698,58 @@ async function useTemplate() {
     message("Setup loaded as a duplicate. Start calculation creates a separate history item.");
     $("run-name").scrollIntoView({ behavior: "smooth", block: "center" });
   } catch (error) {
-    if (!controller.signal.aborted && selected === runId) message(error.message, true);
+    if (!controller.signal.aborted && selected === runId) { calculationLoadFailed = true; message(error.message, true); }
   } finally {
-    if (templateAbort === controller) { templateAbort = null; updateButtons(); }
+    if (templateAbort === controller) { templateAbort = null; updateButtons(); if (!calculationLoadFailed) $("run-name").focus(); }
   }
 }
 
 async function openEditor(mode) {
   if (!selected || !(mode === "full" ? selectedCanTemplate : selectedCanRework) || busy || fetching || templateAbort) return;
+  if (mode !== "full") {
+    hideRunActionHelp();
+    await artifactEditor.open(selected, mode, $(mode === "compose" ? "edit-figure" : "rerender"));
+    return;
+  }
   const runId = selected;
   const controller = new AbortController();
   templateAbort = controller;
+  openCalculationDialog($("edit-calculation"), "Edit calculation");
   updateButtons();
+  message("Loading the saved settings and checking input files…");
   try {
-    const url = mode === "full" ? `/api/runs/${encodeURIComponent(runId)}/template?edit=true`
-      : `/api/runs/${encodeURIComponent(runId)}/editor?operation=${mode}`;
+    const url = `/api/runs/${encodeURIComponent(runId)}/template?edit=true`;
     const data = await api(url, { signal: controller.signal });
     if (controller.signal.aborted || templateAbort !== controller || selected !== runId) return;
     applyTemplate(data);
     message("Editing this calculation. Adjust settings, update, and review again; the history item stays the same.");
     $("run-name").scrollIntoView({ behavior: "smooth", block: "center" });
   } catch (error) {
-    if (!controller.signal.aborted && templateAbort === controller) message(error.message, true);
+    if (!controller.signal.aborted && templateAbort === controller) { calculationLoadFailed = true; message(error.message, true); }
   } finally {
-    if (templateAbort === controller) { templateAbort = null; updateButtons(); }
+    if (templateAbort === controller) { templateAbort = null; updateButtons(); if (!calculationLoadFailed) $("run-name").focus(); }
+  }
+}
+
+async function artifactQueued(runId, mode) {
+  busy = true;
+  workspaceNotice.track(runId, mode);
+  selectedCanTemplate = false;
+  selectedCanRework = false;
+  if (templateSource === runId && updateInPlace) {
+    editingRunning = true;
+    sourceManifest = null;
+    watchEditingRun(runId);
+  }
+  updateButtons();
+  try {
+    await refreshHistory();
+    await selectRun(runId);
+  } catch (error) {
+    message(`Update queued, but its progress could not be loaded: ${error.message}. Select the calculation in history to reconnect.`, true);
+  } finally {
+    busy = false;
+    updateButtons();
   }
 }
 
@@ -715,8 +775,7 @@ function renderSettingsSummary() {
   const settings = readDefaultSettings($);
   $("settings-summary").textContent = `${settings.size} px tiles · ${settings.dpi} DPI · ${settings.workers} parallel cells · ${settings.force_field} · ${settings.ray_trace ? "ray tracing" : "quick rendering"}`;
   $("settings-source").textContent = templateSource
-    ? "This calculation keeps its saved settings. Changing global defaults does not alter saved calculations."
-    : "Your standard settings are ready. Override them below only when this calculation needs something different.";
+    ? "Using saved calculation settings." : "Using saved defaults.";
 }
 
 function renderWizard(step) {
@@ -727,12 +786,12 @@ function renderWizard(step) {
     const current = Number(button.dataset.step) === step;
     if (current) button.setAttribute("aria-current", "step");
     else button.removeAttribute("aria-current");
-    button.disabled = busy || fetching || templateAbort !== null;
+    button.disabled = busy || fetching || templateAbort !== null || calculationLoadFailed;
   });
   $("wizard-back").hidden = step === 1;
-  $("wizard-back").disabled = busy || fetching || templateAbort !== null;
+  $("wizard-back").disabled = busy || fetching || templateAbort !== null || calculationLoadFailed;
   $("wizard-next").hidden = step === 3;
-  $("wizard-next").disabled = busy || fetching || templateAbort !== null;
+  $("wizard-next").disabled = busy || fetching || templateAbort !== null || calculationLoadFailed;
   $("wizard-next").textContent = step === 1 ? "Next: pH →" : "Next: review →";
   $("validate").hidden = step !== 3;
   $("submit").hidden = step !== 3;
@@ -760,7 +819,30 @@ function validateWizardStep(from, to) {
   return true;
 }
 
-function setWizardStep(step) { wizard.go(step); }
+function setWizardStep(step) {
+  if (!wizard.go(step) || !$("calculation-dialog").open) return;
+  if (step === 1) $("run-name").focus();
+  else if (step === 2) $(phMode() === "range" ? "ph-start" : "ph-values").focus();
+  else { $("wizard-review").tabIndex = -1; $("wizard-review").focus(); }
+}
+
+function openCalculationDialog(opener, title = "New calculation") {
+  calculationLoadFailed = false;
+  calculationOpener = opener;
+  $("setup-title").textContent = title;
+  $("form-message").hidden = true;
+  updateButtons();
+  if (!$("calculation-dialog").open) $("calculation-dialog").showModal();
+}
+
+function closeCalculationDialog(submitted = false) {
+  if (busy && !submitted) return;
+  const dialog = $("calculation-dialog");
+  if (!dialog.open) return;
+  dialog.close();
+  if (!submitted) { resetSetup(); message(""); }
+  if (!submitted && calculationOpener?.isConnected) calculationOpener.focus();
+}
 
 function applySavedDefaults() { applyDefaultSettings(preferences.defaults, $); }
 
@@ -771,6 +853,9 @@ function initializePreferences() {
   clone.querySelectorAll("[for]").forEach((element) => { element.htmlFor = `default-${element.htmlFor}`; });
   clone.querySelectorAll("[aria-describedby]").forEach((element) => {
     element.setAttribute("aria-describedby", element.getAttribute("aria-describedby").split(" ").map((id) => `default-${id}`).join(" "));
+  });
+  clone.querySelectorAll("[data-help-for]").forEach((element) => {
+    element.dataset.helpFor = `default-${element.dataset.helpFor}`;
   });
   clone.querySelector(".workers-setting").remove();
   ["size", "dpi", "background"].forEach((id) => clone.querySelector(`#default-${id}`).closest("label").remove());
@@ -875,11 +960,10 @@ $("refresh-history").onclick = refreshHistory;
 $("recheck-tools").onclick = checkTools;
 $("use-template").onclick = useTemplate;
 $("done-editing").onclick = () => {
-  if (busy || editingRunning || templateAbort) return;
-  if (!window.confirm("Finish editing? Only changes applied with Update or Rerun are saved. Unsubmitted form changes will be discarded.")) return;
-  resetSetup();
-  message("Calculation saved. The latest result is shown here; use Edit calculation or Re-render whenever you want to refine it again.");
+  closeCalculationDialog();
 };
+$("close-calculation").onclick = () => closeCalculationDialog();
+$("calculation-dialog").addEventListener("cancel", (event) => { event.preventDefault(); closeCalculationDialog(); });
 $("edit-calculation").onclick = () => openEditor("full");
 $("edit-figure").onclick = () => openEditor("compose");
 $("rerender").onclick = () => openEditor("render");
@@ -899,6 +983,8 @@ $("cancel").onclick = async () => {
   } catch (error) { message(error.message, true); $("cancel").disabled = false; }
 };
 function resetSetup() {
+  calculationLoadFailed = false;
+  artifactEditor.close();
   editingSelection.close();
   cancelPdbFetch();
   cancelTemplateLoad();
@@ -920,17 +1006,10 @@ function resetSetup() {
 }
 
 $("new-run").onclick = () => {
+  if (busy) return;
   resetSetup();
-  selection.close();
-  selected = null;
-  selectedStatus = null;
-  selectedCanTemplate = false;
-  selectedCanRework = false;
-  updateButtons();
-  $("run-detail").hidden = true;
-  $("empty-state").hidden = false;
   message("");
-  refreshHistory();
+  openCalculationDialog($("new-run"));
   $("run-name").focus();
 };
 const logTimer = setInterval(() => {
@@ -946,6 +1025,13 @@ window.addEventListener("pagehide", () => {
 initializeRunActionHelp();
 initializePhInputs();
 initializePreferences();
+const artifactEditor = new ArtifactEditor({
+  request: api,
+  queued: artifactQueued,
+  ready: (mode) => mode === "compose" || pymolReady,
+});
+const dialogHelp = new DialogHelp();
+dialogHelp.enhance();
 setWizardStep(1);
 checkTools();
 refreshHistory();

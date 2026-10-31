@@ -11,13 +11,14 @@ application and command-line interface use the same local workflow.
    environment; allow a few minutes and keep the computer online.
 3. Save your standard settings in the optional welcome dialog, or choose
    **Skip — use defaults**. You can change them later from the sidebar.
-4. In **Proteins**, add local `.pdb`, `.cif`, or `.mmcif` files, or enter a PDB code such as
+4. Click **New calculation** in the sidebar. In the dialog's **Proteins** step,
+   add local `.pdb`, `.cif`, or `.mmcif` files, or enter a PDB code such as
    `3SQR` and click **Add PDB entry**. Add variant files to the same comparison.
 5. Click **Next: pH**, then choose a range with start `3`, stop `8`, and step `1`.
 6. Open **Review**. Your standard settings are ready; change optional overrides
    only when this calculation needs them. Validate or start the calculation.
-   The app shows progress and
-   provides the final image and run files when it completes.
+   Once queued, the dialog closes and the full-width workspace shows progress,
+   the final image, and run files. No configuration column takes space from the results.
 
 Use [release troubleshooting](releases.md#troubleshooting) if first-run setup
 fails, especially on a managed company network.
@@ -32,6 +33,12 @@ choose **Check again**. Missing tools expand these details automatically.
 The charge-color key appears beside a finished figure and follows that
 calculation's saved colors, not unsubmitted changes in the editor.
 
+Dialog fields use **?** controls for detailed explanations. Click or tap one,
+or focus it with Tab and press Enter or Space. Only one explanation opens at
+a time. Press Escape to close help without closing the dialog; press Escape
+again to dismiss the dialog. Limits, experimental features, memory warnings,
+and overwrite behavior remain visible without opening help.
+
 ## Configure standard settings once
 
 Open **Standard settings** in the sidebar to choose the defaults for new GUI
@@ -43,12 +50,19 @@ you dismissed initial setup. Closing the initial dialog or pressing Escape
 also skips setup. If preferences cannot be written, skipping still lets you
 continue; pHmap explains that it cannot remember the dismissal.
 
-After setup, the wizard asks only for calculation-specific choices:
+After setup, **New calculation** opens a three-step dialog for calculation-specific choices:
 
 1. **Proteins:** structures, labels/order, an optional name, and optional camera
    or shared ligand files.
 2. **pH:** the range or ordered explicit values for this comparison.
 3. **Review:** a concise settings summary, optional overrides, validation, and run.
+
+The same dialog opens for **Edit calculation** and **Duplicate calculation**.
+Cancel, the close button, or Escape discards unsubmitted setup changes without
+changing the saved calculation or clearing the result in the workspace. Closing
+also cancels pending setup/PDB requests so late responses cannot reopen the dialog.
+While a calculation is being submitted, closing waits until the local server
+confirms whether it was queued. Validation errors stay inside the dialog.
 
 Advanced controls remain available under **Override settings for this
 calculation**. They affect only the current calculation. **Use my saved defaults**
@@ -165,7 +179,7 @@ updates. Press Escape to dismiss the tooltip. Actions remain visible but
 disabled while a calculation is running, with an explanation in the tooltip.
 
 1. Select a finished calculation in **Run history**.
-2. Click **Edit calculation**. This loads the setup without starting any tools.
+2. Click **Edit calculation**. This opens the three-step setup dialog without starting any tools.
 3. Adjust pH values, labels/order, rendering, or publication styling. You can
    remove saved structure rows and add new files or PDB entries.
 4. Saved camera and shared ligand inputs are marked in the form. Upload a new
@@ -195,8 +209,10 @@ outside the GUI's current size/count limits cannot be loaded as templates.
 history ID, even though it does not have a scientific manifest yet. **Duplicate
 calculation** still creates a separate ID.
 
-**New calculation** clears the form and cancels pending setup/PDB requests;
-late responses cannot repopulate the new setup.
+**New calculation** opens a fresh setup dialog while the selected result remains
+visible behind it. It cancels pending setup/PDB requests; late responses cannot
+repopulate the new setup. The sidebar holds history and global settings; the main
+workspace is reserved for progress, results, and result-editing actions.
 
 ## Edit figures and re-render saved runs
 
@@ -208,22 +224,46 @@ Select a terminal run in **Run history**, then choose an action:
 | **Re-render** | Saved PQR structures and DX potentials | PyMOL and composition; no PDB2PQR or APBS required |
 | **Edit calculation** | Saved raw structures and setup | Full calculation, including PDB2PQR and APBS |
 
-Opening an editor does not start work. Adjust labels, order, font size, margins,
+**Edit figure** and **Re-render** open focused dialogs. Edit figure opens figure
+layout and publication settings.
+Re-render opens surface resolution, colors, parallel cells, and camera controls;
+advanced surface options and figure layout remain available in expandable sections.
+The force field and scientific inputs are fixed, because these operations reuse
+saved artifacts. Opaque image backgrounds are locked in Edit figure; use Re-render
+to change them.
+
+Opening a dialog does not start work. Adjust labels, order, font size, margins,
 spacing, DPI, pH label precision, or legend visibility. Remove/reorder saved rows
 and choose a subset/order of the **existing** pH values if desired. Re-rendering
 also permits camera replacement/removal, surface/ligand representations,
 resolution, potential colors/limit, ray tracing, and background changes.
 
-The form prominently identifies the calculation being edited. Click **Validate**
-to verify artifacts and display the stage plan, then **Update figure**,
-**Update surface renders**, or **Rerun this calculation**. Each action updates
+Composed figures show **pH** in the protein-name column, aligned with the pH
+values below the images. This applies to GUI and CLI output. Use **Edit figure**
+to add the label to an existing result without rerunning the scientific tools.
+
+Each dialog identifies its source calculation. **Check settings** validates the
+saved artifacts without starting work. Click **Update figure** or **Re-render
+surfaces** to apply the changes; the dialog closes and the result panel follows
+progress. Errors stay inside the dialog so you can correct the settings. Cancel,
+the close button, or Escape discards dialog edits without changing your wizard
+draft, standard settings, or saved calculation. After submission starts, closing
+is disabled until the local server confirms the queued update.
+
+Queued work shows a compact progress notice below the workspace heading. It
+updates with the calculation and disappears when the work finishes, fails, or is
+cancelled. You can dismiss it earlier with its close button; switching to another
+history item also removes that run-specific notice. Error details remain in the
+result panel. Newer unrelated notifications are not cleared by an older run.
+
+**Edit calculation** uses the full three-step configuration dialog. Click **Validate**, then
+**Rerun this calculation** to recalculate all stages. Each action updates
 the same history item and output paths. The updated preview refreshes automatically.
-After your first calculation starts, subsequent submissions also target that
-calculation; choose **New calculation** to leave it and start a separate one.
-Click **Done editing** when satisfied: the latest result remains visible and
-saved, and the form leaves editing mode. You can reopen it later from history.
-The confirmation makes clear that unsubmitted form changes are discarded;
-apply them with **Update** or **Rerun** first if you want to keep them.
+Use **Edit calculation** to reopen the latest saved setup and update the same
+history item. **New calculation** opens a fresh dialog for a separate calculation.
+Closing a dialog without submitting discards its changes; the latest saved result
+remains visible. Apply changes with **Update** or **Rerun** before closing if you
+want to keep them.
 
 Workers build replacements in private temporary storage. Until success, the
 last good figure remains available. A failed or cancelled attempt cannot

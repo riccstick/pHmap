@@ -15,8 +15,9 @@ const defaultSettingControls = {
   ph_label_precision: ["ph-label-precision", "precision"],
 };
 
-function readDefaultSettings(control) {
-  return Object.fromEntries(Object.entries(defaultSettingControls).map(([key, [id, type]]) => {
+function readDefaultSettings(control, keys = Object.keys(defaultSettingControls)) {
+  return Object.fromEntries(keys.map((key) => {
+    const [id, type] = defaultSettingControls[key];
     const element = control(id), value = element.value;
     const converted = type === "boolean" ? element.checked
       : type === "number" ? Number(value)
@@ -28,8 +29,9 @@ function readDefaultSettings(control) {
   }));
 }
 
-function applyDefaultSettings(settings, control) {
-  for (const [key, [id, type]] of Object.entries(defaultSettingControls)) {
+function applyDefaultSettings(settings, control, keys = Object.keys(defaultSettingControls)) {
+  for (const key of keys) {
+    const [id, type] = defaultSettingControls[key];
     const element = control(id), value = settings[key];
     if (type === "boolean") { element.checked = value; continue; }
     const text = type === "background" && value === null ? "transparent"

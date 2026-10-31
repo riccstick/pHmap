@@ -156,6 +156,18 @@ def test_history_editor_validates_a_stage_plan_and_queues_an_immutable_derivativ
     assert result["cells"][0]["metrics"]["pqr"]["total_charge"] == -0.3
 
 
+@pytest.mark.parametrize("background", ["white", None])
+def test_artifact_editor_reports_the_saved_tile_background(
+    client: TestClient, background: str | None,
+) -> None:
+    run_id = _submit(client, ph_values="5", background=background).json()["run_id"]
+    assert _wait(client, run_id, {"completed", "failed"})["status"] == "completed"
+    for mode in ("compose", "render"):
+        response = client.get(f"/api/runs/{run_id}/editor", params={"operation": mode})
+        assert response.status_code == 200, response.text
+        assert response.json()["tile_background"] == background
+
+
 @pytest.mark.parametrize(
     "changes,explanation",
     [
@@ -498,11 +510,18 @@ def test_gui_loads_the_progress_controller_before_the_page_script(client: TestCl
     assert page.index("/static/protein-selection.js") < page.index("/static/app.js")
     assert page.index("/static/template-settings.js") < page.index("/static/app.js")
     assert page.index("/static/preferences.js") < page.index("/static/app.js")
+    assert page.index("/static/preferences.js") < page.index("/static/artifact-editor.js")
+    assert page.index("/static/artifact-editor.js") < page.index("/static/app.js")
+    assert page.index("/static/workspace-notice.js") < page.index("/static/app.js")
+    assert page.index("/static/dialog-help.js") < page.index("/static/app.js")
     assert client.get("/static/run-selection.js").status_code == 200
     assert client.get("/static/protein-selection.js").status_code == 200
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/static/template-settings.js").status_code == 200
     assert client.get("/static/preferences.js").status_code == 200
+    assert client.get("/static/artifact-editor.js").status_code == 200
+    assert client.get("/static/workspace-notice.js").status_code == 200
+    assert client.get("/static/dialog-help.js").status_code == 200
     assert 'id="use-template"' in page
 
 

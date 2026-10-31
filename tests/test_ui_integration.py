@@ -29,8 +29,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("scenario", [
-    "workflow", "compact-layout", "ph-controls", "first-launch", "first-launch-close",
-    "first-launch-escape",
+    "workflow", "calculation-dialog", "artifact-lifecycle", "dialog-help", "dialog-feedback",
+    "compact-layout", "ph-controls",
+    "first-launch", "first-launch-close", "first-launch-escape",
     "startup-failure", "outdated-server", "stale-main-script", "missing-styles",
 ])
 def test_full_page_ui(

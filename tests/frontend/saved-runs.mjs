@@ -20,7 +20,8 @@ function harness() {
     selectedCanTemplate: true, selectedCanRework: true, URLSearchParams,
     terminal: new Set(["completed", "failed", "cancelled", "interrupted"]),
     proteins: [{ savedProteinId: "wt" }], busy: false, fetching: false, templateAbort: null,
-    $: (id) => { if (!controls.has(id)) controls.set(id, {}); return controls.get(id); },
+    calculationLoadFailed: false,
+    $: (id) => { if (!controls.has(id)) controls.set(id, { focus() {}, scrollIntoView() {} }); return controls.get(id); },
     updateButtons() {}, message: (text) => messages.push(text), formData: () => payload,
     api: async (url, options) => {
       requests.push({ url, options });
@@ -30,6 +31,8 @@ function harness() {
     },
     window: { confirm: (text) => { confirmations.push(text); return accept; } },
     refreshHistory() {}, selectRun() {}, syncSavedInputs() {}, watchEditingRun() {}, renderSettingsSummary() {},
+    closeCalculationDialog() {},
+    workspaceNotice: { track() {} },
   };
   const methods = runInNewContext(`${functions}\n({ requiredToolsReady, syncOperation, send, reconcileEditingSession, artifactUrl, updateButtons });`, state);
   return { state, methods, controls, requests, confirmations, messages, payload,

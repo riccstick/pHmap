@@ -26,6 +26,10 @@ const defaults = {
   assert.equal(controls.get("foreground").value, "auto");
   assert.equal(controls.get("ramp").options[0].value, "green,white,orange");
   assert.equal(controls.get("legend").checked, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(readDefaultSettings((id) => controls.get(id), ["size"]))), { size: 1200 });
+  applyDefaultSettings({ dpi: 600 }, (id) => controls.get(id), ["dpi"]);
+  assert.equal(controls.get("dpi").value, "600");
+  assert.equal(controls.get("size").value, "1200", "A scoped editor must not touch unrelated controls.");
 }
 
 {
@@ -108,6 +112,7 @@ function preferencesHarness() {
     selected: "history-B", templateSource: "editing-A", updateInPlace: true, editingRunning: true,
     sourceManifest: null, terminal: new Set(["completed", "failed", "cancelled", "interrupted"]),
     busy: false, fetching: false, templateAbort: null, proteins: [{}], operation: "full",
+    calculationLoadFailed: false,
     toolsReady: true, pymolReady: true, selectedCanTemplate: true, selectedCanRework: true,
     $: (id) => { if (!controls.has(id)) controls.set(id, {}); return controls.get(id); },
     refreshHistory() {}, message() {}, api() {},

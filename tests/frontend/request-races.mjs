@@ -16,10 +16,12 @@ const finishBody = app.match(/\$\("done-editing"\)\.onclick = \(\) => \{([\s\S]*
 function harness() {
   const selection = new ProteinSelection();
   const requests = [], messages = [], applied = [];
+  let closed = false;
   const controls = {
     "pdb-code": { value: "3SQR" },
     "run-form": { reset() { controls["pdb-code"].value = ""; } },
     "run-name": { focus() {}, scrollIntoView() {} },
+    "new-run": {}, "edit-calculation": {}, "use-template": {},
     "run-detail": { hidden: false }, "empty-state": { hidden: true },
   };
   const state = {
@@ -28,6 +30,7 @@ function harness() {
     selected: "source-run", selectedStatus: "completed", selectedCanTemplate: true,
     templateSource: "source-run", reuseView: false, reuseLigand: false,
     operation: "full", sourceManifest: null, selectedCanRework: true,
+    calculationLoadFailed: false,
     updateInPlace: true, editingRunning: false,
     window: { confirm: () => true },
     proteins: selection.rows, proteinSelection: selection,
@@ -37,11 +40,14 @@ function harness() {
     renderProteins() {}, updateButtons() {}, syncSavedInputs() {}, syncPhMode() {}, syncOperation() {},
     selection: { close() {} }, editingSelection: { close() {} }, refreshHistory() {},
     applySavedDefaults() {}, setWizardStep() {},
+    artifactEditor: { close() {} },
+    openCalculationDialog() {}, closeCalculationDialog() { closed = true; },
   };
   const methods = runInNewContext(`${functions}\nfunction newCalculation() {${resetBody}\n}\n`
     + `function finishEditing() {${finishBody}\n}\n`
     + "({ addPdb, cancelPdbFetch, useTemplate, cancelTemplateLoad, openEditor, newCalculation, finishEditing });", state);
-  return { state, controls, requests, messages, applied, methods, rows: selection.rows };
+  return { state, controls, requests, messages, applied, methods, rows: selection.rows,
+    get closed() { return closed; } };
 }
 
 {
@@ -117,8 +123,8 @@ console.log("Request-race checks passed");
 
 {
   const test = harness();
-  const pending = test.methods.openEditor("compose");
-  assert.match(test.requests[0].url, /editor\?operation=compose$/);
+  const pending = test.methods.openEditor("full");
+  assert.match(test.requests[0].url, /template\?edit=true$/);
   test.methods.newCalculation();
   test.requests[0].resolve({ source: "old editor" });
   await pending;
@@ -129,6 +135,5 @@ console.log("Request-race checks passed");
   const test = harness();
   test.methods.finishEditing();
   assert.equal(test.state.selected, "source-run", "Done editing keeps the reviewed result visible.");
-  assert.equal(test.state.templateSource, null);
-  assert.equal(test.state.updateInPlace, false);
+  assert.equal(test.closed, true, "Cancel delegates to the dialog close controller.");
 }
