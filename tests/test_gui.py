@@ -1167,10 +1167,13 @@ def test_cli_run_history_is_visible_and_artifact_paths_are_contained(
 
 
 @pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("child_exits_first", [False, True])
 def test_cancel_active_and_queued_jobs_preserves_artifacts(
     client: TestClient,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     workers: int,
+    child_exits_first: bool,
 ) -> None:
     if available_cpus() < workers:
         pytest.skip("Parallel cancellation needs at least two available CPUs")
@@ -1204,6 +1207,21 @@ def test_cancel_active_and_queued_jobs_preserves_artifacts(
     assert client.post(f"/api/runs/{second}/cancel", headers=_token(client)).status_code == 200
     assert _wait(client, second, {"cancelled"})["completed"] == 0
     assert not (tmp_path / "runs" / second).exists()
+    if child_exits_first:
+        from phmap.gui.jobs import terminate_tree
+        from phmap.manifest import finish_task_state
+
+        def stop_child_before_worker(process, *, force=False):  # type: ignore[no-untyped-def]
+            if not force:
+                # Reproduce Windows taskkill ordering on every platform: the
+                # worker records a killed child before it is itself stopped.
+                path = tmp_path / "runs" / first / "manifest.json"
+                data = json.loads(path.read_text(encoding="utf-8"))
+                finish_task_state(data["tasks"][-1], "failed", error="Child terminated")
+                write_json(path, data)
+            terminate_tree(process, force=force)
+
+        monkeypatch.setattr("phmap.gui.jobs.terminate_tree", stop_child_before_worker)
     client.post(f"/api/runs/{first}/cancel", headers=_token(client))
     data = _wait(client, first, {"cancelled"})
     assert not data["can_cancel"]
