@@ -262,17 +262,17 @@ The full native workflow:
 
 Set the same version in `pyproject.toml` and `src/phmap/__init__.py`, refresh
 `uv.lock` and `pixi.lock`, and commit the change. After it is merged and the
-required checks pass, tag that exact commit. For the 2.0.0 stable release:
+required checks pass, tag that exact commit. For the 2.1.0 stable release:
 
 ```console
-git tag v2.0.0
-git push origin v2.0.0
+git tag v2.1.0
+git push origin v2.1.0
 ```
 
 The build rejects tags that do not match `pyproject.toml`. Once Actions is green,
 open **Releases**, inspect the draft, download/test the apps on clean machines,
 edit the release notes, and publish. Mark alpha/beta tags as **pre-release**;
-stable tags such as `v2.0.0` should be published as the latest stable release.
+stable tags such as `v2.1.0` should be published as the latest stable release.
 Manual workflow runs create downloadable artifacts but no release.
 
 Only the release job receives `contents: write`; builds have read-only repo
